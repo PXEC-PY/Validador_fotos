@@ -39,5 +39,5 @@ export const MAX_FOTOS = 20;
 // Upload > Upload presets > crear uno con Signing Mode = "Unsigned").
 // Ninguno de los dos valores es secreto: están pensados para usarse desde
 // el navegador.
-export const CLOUDINARY_CLOUD_NAME = "REEMPLAZAR_CLOUD_NAME";
-export const CLOUDINARY_UPLOAD_PRESET = "REEMPLAZAR_UPLOAD_PRESET";
+export const CLOUDINARY_CLOUD_NAME = "vikwio2u";
+export const CLOUDINARY_UPLOAD_PRESET = "vikwio2u";
