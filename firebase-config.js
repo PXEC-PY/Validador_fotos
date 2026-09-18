@@ -1,4 +1,4 @@
-// Configuración de Firebase para Validador de fotos.
+// Configuración de Firebase + Cloudinary para Validador de fotos.
 //
 // Completar los valores de abajo con los de tu proyecto de Firebase:
 // Firebase Console > (ícono de engranaje) Configuración del proyecto > "Tus apps"
@@ -7,14 +7,13 @@
 // Este archivo se importa desde index.html y admin.html como módulo ES:
 //   import { auth, db } from './firebase-config.js';
 //
-// Nota: no usamos Firebase Storage a propósito. Desde fines de 2024, Storage
-// exige el plan de pago Blaze incluso para uso dentro de la capa gratuita.
-// Para evitar pedir una tarjeta, las fotos se guardan como texto (base64)
-// directamente en los documentos de Firestore, que sigue siendo 100% gratis
-// en el plan Spark. Esto limita cada foto a ~700KB (se comprime al capturarla
-// en index.html) y el total del proyecto a 1GB de almacenamiento gratuito en
-// Firestore — de sobra para probar, pero si esto escala a mucho volumen real,
-// conviene migrar a Storage (activando Blaze) más adelante.
+// Nota sobre las fotos: no usamos Firebase Storage (desde fines de 2024 exige
+// el plan de pago Blaze) ni las guardamos en Firestore (limitaba la calidad a
+// ~700KB por el tope de 1MB por documento). Las fotos se suben directo del
+// navegador a Cloudinary (gratis, sin tarjeta) usando un "unsigned upload
+// preset" — no expone ninguna clave secreta en el código. Firestore solo
+// guarda el link (`url`) a cada foto, así que no hay límite de calidad real.
+// Ver README.md para los pasos de configuración de Cloudinary.
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
@@ -36,7 +35,9 @@ export const db = getFirestore(app);
 // Máximo de fotos por lote.
 export const MAX_FOTOS = 20;
 
-// Tamaño máximo (en bytes, del JPEG antes de convertir a base64) por foto,
-// para que cada documento de Firestore se mantenga bien por debajo de su
-// límite de 1MB. 700KB en base64 pesa ~935KB, dejando margen de sobra.
-export const MAX_FOTO_BYTES = 700 * 1024;
+// Datos de tu cuenta de Cloudinary (Dashboard > "Cloud name", y Settings >
+// Upload > Upload presets > crear uno con Signing Mode = "Unsigned").
+// Ninguno de los dos valores es secreto: están pensados para usarse desde
+// el navegador.
+export const CLOUDINARY_CLOUD_NAME = "REEMPLAZAR_CLOUD_NAME";
+export const CLOUDINARY_UPLOAD_PRESET = "REEMPLAZAR_UPLOAD_PRESET";

@@ -1,7 +1,7 @@
 # Validador de fotos
 
 Sitio estático (sin backend propio) que usa **Firebase** (Auth + Firestore) como base de
-datos. Tres páginas:
+datos y **Cloudinary** para alojar las fotos. Tres páginas:
 
 - `index.html` — el cliente saca hasta 20 fotos del vehículo desde la cámara del
   navegador, confirma su ubicación (GPS del dispositivo, no editable a mano) y sube todo.
@@ -22,12 +22,11 @@ No hay paso de build: son archivos HTML/CSS/JS planos que se sirven tal cual (Gi
 Pages, o cualquier hosting estático).
 
 **Nota sobre las fotos:** no usamos Firebase Storage a propósito, porque desde fines de
-2024 exige activar el plan de pago Blaze (con tarjeta) incluso para uso gratuito. En vez
-de eso, cada foto se comprime en el navegador (máx. ~600KB) y se guarda como texto
-base64 directo en el documento de Firestore — 100% gratis en el plan Spark, sin tarjeta.
-Esto alcanza de sobra para probar el sistema y un volumen moderado de uso real; si el
-volumen crece mucho (Firestore da 1GB gratis en total), se puede migrar a Storage más
-adelante activando Blaze.
+2024 exige activar el plan de pago Blaze (con tarjeta) incluso para uso gratuito. Tampoco
+las guardamos en Firestore como texto (eso limitaba mucho la calidad, por el tope de 1MB
+por documento). Las fotos se suben directo del navegador a **Cloudinary** — plan gratuito
+generoso, sin pedir tarjeta — usando un "unsigned upload preset" (no expone ninguna clave
+secreta). Firestore solo guarda el link a cada foto.
 
 ## 1. Crear el proyecto de Firebase
 
@@ -55,7 +54,22 @@ En el menú lateral, **Authentication > Sign-in method**, activá:
    de este repo y publicá. (No hay Firebase CLI instalada en esta máquina para hacer
    `firebase deploy`, así que las reglas se pegan a mano cada vez que cambian.)
 
-## 4. Crear el primer usuario admin
+## 4. Crear la cuenta de Cloudinary
+
+1. Entrá a [cloudinary.com](https://cloudinary.com/) y creá una cuenta gratuita (no pide
+   tarjeta).
+2. En el **Dashboard**, copiá el valor de **"Cloud name"** — va en
+   `CLOUDINARY_CLOUD_NAME` dentro de [firebase-config.js](firebase-config.js).
+3. Andá a **Settings** (ícono de engranaje) **> Upload > Upload presets > Add upload
+   preset**:
+   - **Signing Mode**: `Unsigned` (imprescindible — así se puede subir desde el navegador
+     sin exponer ninguna clave secreta).
+   - Podés dejar el resto de las opciones por defecto, o ponerle un nombre de carpeta fijo
+     si querés organizar las fotos dentro de Cloudinary.
+   - Guardá y copiá el **nombre del preset** — va en `CLOUDINARY_UPLOAD_PRESET` en
+     [firebase-config.js](firebase-config.js).
+
+## 5. Crear el primer usuario admin
 
 1. **Authentication > Users > Add user**: cargá el email/contraseña de la primera persona
    que va a usar `admin.html`. Copiá el **User UID** que te muestra la tabla.
@@ -65,7 +79,7 @@ En el menú lateral, **Authentication > Sign-in method**, activá:
    loguearse en `admin.html` pero va a ver "No autorizado".
 3. Repetí el paso para cada persona del staff que necesite acceso al panel.
 
-## 5. Completar datos del negocio
+## 6. Completar datos del negocio
 
 En [firebase-config.js](firebase-config.js):
 
@@ -75,7 +89,7 @@ El botón "Enviar por WhatsApp" de la pantalla de ticket usa `wa.me` sin número
 (`https://wa.me/?text=...`): abre WhatsApp y el cliente elige a quién mandárselo, así que
 no hace falta configurar ningún número acá.
 
-## 6. Probar en local
+## 7. Probar en local
 
 Los navegadores exigen un "contexto seguro" (HTTPS o `localhost`) para dar acceso a
 cámara y GPS — no funciona abriendo el archivo `index.html` directo con doble click
@@ -94,16 +108,11 @@ celular, conectado a la misma red, se puede probar con la IP de la compu
 cámara/ubicación — para probar desde el celular es más simple hacerlo directo contra la
 URL pública de GitHub Pages una vez publicado.
 
-## 7. Publicar en GitHub Pages
+## 8. Publicar en GitHub Pages
 
-Este repo se descargó como ZIP (no había `git` instalado en esta máquina). Para subir los
-cambios:
-
-- **Opción simple:** entrar a la página del repo en github.com, "Add file > Upload
-  files", y arrastrar los archivos modificados/nuevos (`index.html`, `admin.html`,
-  `analizador.html`, `shared.css`, `firebase-config.js`).
-- **Opción con git:** instalar [Git for Windows](https://git-scm.com/download/win),
-  clonar el repo, copiar estos archivos adentro, `git add`, `git commit`, `git push`.
+Git ya está instalado en esta máquina (`C:\Program Files\Git`) y el repo local está
+conectado a `origin` (`https://github.com/PXEC-PY/Validador_fotos.git`). Para publicar
+cambios: `git add -A`, `git commit -m "..."`, `git push origin main`.
 
 GitHub Pages ya sirve el repo en `https://pxec-py.github.io/Validador_fotos/`, así que
 apenas se suben los cambios quedan publicados ahí (HTTPS real, sin restricciones de

@@ -171,7 +171,7 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script type="module">
-import { auth, db, MAX_FOTOS, MAX_FOTO_BYTES } from './firebase-config.js';
+import { auth, db, MAX_FOTOS, CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from './firebase-config.js';
 import { signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { collection, doc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
@@ -181,7 +181,7 @@ document.getElementById('fotoCounter').textContent = `0 / ${MAX_FOTOS}`;
 const state = {
   patente: '',
   ubicacion: null,   // { lat, lng, accuracy, capturedAt }
-  fotos: [],          // [{ dataUrl, bytes, capturedAt, shotNumber }]
+  fotos: [],          // [{ blob, dataUrl, capturedAt, shotNumber }]
   nextShotNumber: 1,
   stream: null,
   loteId: null,
@@ -336,44 +336,34 @@ function canvasToBlob(canvas, quality) {
 
 // Dibuja un QR ya generado en la esquina inferior derecha del canvas. El QR
 // se genera con el blanco ya semitransparente y el negro sólido (ver
-// capturarYComprimir), así se integra con la foto sin perder legibilidad.
+// capturarFoto), así se integra con la foto sin perder legibilidad.
 function dibujarQr(canvas, qrCanvas) {
   const ctx = canvas.getContext('2d');
-  const size = Math.round(canvas.width * 0.0325);
+  const size = Math.round(canvas.width * 0.055);
   const pad = Math.round(size * 0.1);
   const x = canvas.width - size - pad;
   const y = canvas.height - size - pad;
   ctx.drawImage(qrCanvas, x, y, size, size);
 }
 
-// Comprime el frame de la cámara (con el QR ya estampado) hasta que pese
-// menos de MAX_FOTO_BYTES, bajando primero la calidad JPEG y, si no alcanza,
-// el tamaño del lado más largo. Así cada foto entra cómoda en un documento
-// de Firestore (< 1MB). El QR se genera una sola vez por foto (no por cada
-// intento de compresión) para que esto no se sienta lento en el celular.
-async function capturarYComprimir(video, qrTexto) {
+// Dibuja el frame de la cámara con el QR estampado y lo codifica en un JPEG
+// de buena calidad. Las fotos ya no se guardan en Firestore (por eso no hay
+// que exprimirlas para entrar en 1MB) — se suben a Cloudinary, así que acá
+// solo importa que se vean bien y no pesen tanto como para tardar una
+// eternidad en subir con datos móviles.
+async function capturarFoto(video, qrTexto) {
   const qrCanvas = await QRCode.toCanvas(qrTexto, {
-    margin: 0, width: 160,
+    margin: 0, width: 200,
     color: { dark: '#000000ff', light: '#ffffff4d' } // negro sólido, blanco ~30% opaco
   });
-  const dims = [1280, 960, 720, 480];
-  const qualities = [0.9, 0.8, 0.65, 0.5, 0.35, 0.2];
-  let lastBlob = null;
-  for (const maxDim of dims) {
-    const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(video.videoWidth * scale);
-    canvas.height = Math.round(video.videoHeight * scale);
-    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    dibujarQr(canvas, qrCanvas);
-    for (const q of qualities) {
-      const blob = await canvasToBlob(canvas, q);
-      if (!blob) continue;
-      lastBlob = blob;
-      if (blob.size <= MAX_FOTO_BYTES) return blob;
-    }
-  }
-  return lastBlob; // no se logró bajar del límite; devolvemos la más chica lograda
+  const maxDim = 1600;
+  const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(video.videoWidth * scale);
+  canvas.height = Math.round(video.videoHeight * scale);
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  dibujarQr(canvas, qrCanvas);
+  return canvasToBlob(canvas, 0.88);
 }
 
 btnDisparar.addEventListener('click', async () => {
@@ -383,10 +373,10 @@ btnDisparar.addEventListener('click', async () => {
   try {
     const shotNumber = state.nextShotNumber++;
     const qrTexto = `${state.ticketCode}-${String(shotNumber).padStart(2, '0')}`;
-    const blob = await capturarYComprimir(video, qrTexto);
+    const blob = await capturarFoto(video, qrTexto);
     if (!blob) return;
     const dataUrl = await blobToDataURL(blob);
-    state.fotos.push({ dataUrl, bytes: blob.size, capturedAt: Date.now(), shotNumber });
+    state.fotos.push({ blob, dataUrl, capturedAt: Date.now(), shotNumber });
     renderThumbs();
   } catch (e) {
     camaraError.textContent = 'No se pudo tomar la foto: ' + (e && e.message ? e.message : String(e));
@@ -411,6 +401,21 @@ function generarTicketCode() {
   let out = '';
   for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
+}
+
+// Sube el blob de la foto directo a Cloudinary (upload unsigned, sin clave
+// secreta) y devuelve la URL pública de la imagen ya alojada.
+async function subirACloudinary(blob) {
+  const formData = new FormData();
+  formData.append('file', blob);
+  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  const resp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
+    method: 'POST',
+    body: formData
+  });
+  if (!resp.ok) throw new Error('Error al subir la foto a Cloudinary (código ' + resp.status + ')');
+  const data = await resp.json();
+  return data.secure_url;
 }
 
 document.getElementById('btnFinalizar').addEventListener('click', async () => {
@@ -454,9 +459,9 @@ document.getElementById('btnFinalizar').addEventListener('click', async () => {
     for (let i = 0; i < state.fotos.length; i++) {
       const foto = state.fotos[i];
       const fotoId = String(foto.shotNumber).padStart(2, '0');
+      const url = await subirACloudinary(foto.blob);
       await setDoc(doc(db, 'lotes', state.loteId, 'fotos', fotoId), {
-        dataUrl: foto.dataUrl,
-        contentType: 'image/jpeg',
+        url,
         capturedAt: foto.capturedAt,
         order: foto.shotNumber
       });

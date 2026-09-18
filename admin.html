@@ -367,8 +367,9 @@ async function renderDetail(loteId) {
   for (const foto of fotos) {
     const fig = document.createElement('figure');
     const img = document.createElement('img');
-    img.src = foto.dataUrl || '';
+    img.src = foto.url || '';
     img.alt = 'Foto ' + foto.order;
+    img.loading = 'lazy';
     fig.appendChild(img);
     const cap = document.createElement('figcaption');
     cap.textContent = '#' + foto.order + (foto.capturedAt ? ' · ' + new Date(foto.capturedAt).toLocaleTimeString('es-AR') : '');
@@ -424,9 +425,10 @@ async function exportarZip(lote, fotos) {
   try {
     const zip = new JSZip();
     for (const foto of fotos) {
-      if (!foto.dataUrl) continue;
-      const base64 = foto.dataUrl.split(',')[1] || '';
-      zip.file(`${lote.ticketCode}_${String(foto.order).padStart(2, '0')}.jpg`, base64, { base64: true });
+      if (!foto.url) continue;
+      const resp = await fetch(foto.url);
+      const blob = await resp.blob();
+      zip.file(`${lote.ticketCode}_${String(foto.order).padStart(2, '0')}.jpg`, blob);
     }
     const metadata = {
       ticketCode: lote.ticketCode,
@@ -532,7 +534,7 @@ async function verificarCodigo(texto) {
     qrResult.innerHTML = `
       <div class="card" style="text-align:left;">
         <div style="display:flex; gap:10px; align-items:flex-start;">
-          <img src="${foto.dataUrl || ''}" alt="" style="width:80px; height:80px; object-fit:cover; border-radius:4px; border:1px solid var(--border); flex-shrink:0;">
+          <img src="${foto.url || ''}" alt="" style="width:80px; height:80px; object-fit:cover; border-radius:4px; border:1px solid var(--border); flex-shrink:0;">
           <div>
             <span class="badge green">✓ Coincide con la base de datos</span>
             <div style="margin-top:4px;"><strong>${ticketCode}</strong> · foto ${fotoId}</div>
