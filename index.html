@@ -165,7 +165,7 @@
   </footer>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script type="module">
 import { auth, db, WHATSAPP_NUMERO, MAX_FOTOS, MAX_FOTO_BYTES } from './firebase-config.js';
@@ -373,6 +373,7 @@ async function capturarYComprimir(video, qrTexto) {
 btnDisparar.addEventListener('click', async () => {
   if (state.fotos.length >= MAX_FOTOS || !video.videoWidth || !state.ticketCode) return;
   btnDisparar.disabled = true;
+  camaraError.textContent = '';
   try {
     const shotNumber = state.nextShotNumber++;
     const qrTexto = `${state.ticketCode}-${String(shotNumber).padStart(2, '0')}`;
@@ -381,6 +382,8 @@ btnDisparar.addEventListener('click', async () => {
     const dataUrl = await blobToDataURL(blob);
     state.fotos.push({ dataUrl, bytes: blob.size, capturedAt: Date.now(), shotNumber });
     renderThumbs();
+  } catch (e) {
+    camaraError.textContent = 'No se pudo tomar la foto: ' + (e && e.message ? e.message : String(e));
   } finally {
     btnDisparar.disabled = state.fotos.length >= MAX_FOTOS;
   }
