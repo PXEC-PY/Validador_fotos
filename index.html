@@ -331,25 +331,29 @@ function canvasToBlob(canvas, quality) {
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
 }
 
-// Dibuja el QR (ticket-nº de foto) quemado en la esquina inferior derecha del
-// canvas, con un fondo blanco para que se lea sobre cualquier fondo.
-async function estamparQr(canvas, texto) {
-  const qrCanvas = await QRCode.toCanvas(texto, { margin: 0, width: 240 });
+// Dibuja un QR ya generado en la esquina inferior derecha del canvas, sobre
+// un fondo blanco semitransparente (deja ver algo de la foto detrás pero
+// mantiene contraste suficiente para que el QR se pueda seguir escaneando).
+function dibujarQr(canvas, qrCanvas) {
   const ctx = canvas.getContext('2d');
-  const size = Math.round(canvas.width * 0.22);
-  const pad = Math.round(size * 0.1);
+  const size = Math.round(canvas.width * 0.13);
+  const pad = Math.round(size * 0.12);
   const x = canvas.width - size - pad * 2;
   const y = canvas.height - size - pad * 2;
+  ctx.globalAlpha = 0.6;
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(x, y, size + pad * 2, size + pad * 2);
+  ctx.globalAlpha = 1;
   ctx.drawImage(qrCanvas, x + pad, y + pad, size, size);
 }
 
 // Comprime el frame de la cámara (con el QR ya estampado) hasta que pese
 // menos de MAX_FOTO_BYTES, bajando primero la calidad JPEG y, si no alcanza,
 // el tamaño del lado más largo. Así cada foto entra cómoda en un documento
-// de Firestore (< 1MB).
+// de Firestore (< 1MB). El QR se genera una sola vez por foto (no por cada
+// intento de compresión) para que esto no se sienta lento en el celular.
 async function capturarYComprimir(video, qrTexto) {
+  const qrCanvas = await QRCode.toCanvas(qrTexto, { margin: 0, width: 160 });
   const dims = [1280, 960, 720, 480];
   const qualities = [0.75, 0.6, 0.45, 0.3, 0.18];
   let lastBlob = null;
@@ -359,7 +363,7 @@ async function capturarYComprimir(video, qrTexto) {
     canvas.width = Math.round(video.videoWidth * scale);
     canvas.height = Math.round(video.videoHeight * scale);
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    await estamparQr(canvas, qrTexto);
+    dibujarQr(canvas, qrCanvas);
     for (const q of qualities) {
       const blob = await canvasToBlob(canvas, q);
       if (!blob) continue;
