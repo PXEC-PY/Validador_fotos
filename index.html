@@ -336,7 +336,7 @@ function canvasToBlob(canvas, quality) {
 // capturarYComprimir), así se integra con la foto sin perder legibilidad.
 function dibujarQr(canvas, qrCanvas) {
   const ctx = canvas.getContext('2d');
-  const size = Math.round(canvas.width * 0.13);
+  const size = Math.round(canvas.width * 0.065);
   const pad = Math.round(size * 0.1);
   const x = canvas.width - size - pad;
   const y = canvas.height - size - pad;
