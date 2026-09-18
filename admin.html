@@ -25,6 +25,7 @@
 .layout{display:flex; flex:1; min-height:0;}
 .col-main{flex:1; min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--border);}
 .col-detail{width:420px; flex-shrink:0; background:var(--bg-alt); overflow-y:auto; max-height:calc(100vh - 49px);}
+.detail-mobile-bar{display:none;}
 
 .toolbar{display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--border-soft); background:var(--bg-alt);}
 .toolbar input[type="search"]{
@@ -74,6 +75,21 @@ textarea#adminNota{
 .qr-video-box video{width:100%; height:100%; object-fit:cover; display:block;}
 #qrResult{margin-top:12px;}
 #qrResult:empty{margin-top:0;}
+
+/* ---------- Mobile ---------- */
+@media (max-width:900px){
+  .topbar{flex-wrap:wrap; row-gap:8px;}
+  .layout{flex-direction:column;}
+  .col-detail{
+    width:100%; position:fixed; inset:0; top:0; z-index:50; max-height:100vh;
+    transform:translateY(100%); transition:transform .18s ease; display:flex; flex-direction:column;
+  }
+  .col-detail.open{transform:translateY(0);}
+  .detail-mobile-bar{display:flex; justify-content:flex-end; padding:8px 12px; border-bottom:1px solid var(--border); flex-shrink:0;}
+}
+@media (max-width:480px){
+  .topbar__link, #btnEscanearQr, #btnLogout{font-size:12px; padding:6px 9px;}
+}
 </style>
 </head>
 <body>
@@ -132,6 +148,7 @@ textarea#adminNota{
       </main>
 
       <aside class="col-detail" id="detailPanel">
+        <div class="detail-mobile-bar"><button class="btn" id="closeDetailBtn" type="button">Cerrar ✕</button></div>
         <div class="detail" id="detailContent">
           <div class="detail__empty">Seleccioná un lote de la lista para ver su detalle.</div>
         </div>
@@ -266,7 +283,12 @@ function renderList() {
       </div>
       <div class="row__sub">${lote.patente || 'sin patente'} · ${lote.fotoCount || 0} fotos · ${fecha}</div>
     `;
-    row.addEventListener('click', () => { state.selectedLoteId = lote.id; renderList(); renderDetail(lote.id); });
+    row.addEventListener('click', () => {
+      state.selectedLoteId = lote.id;
+      renderList();
+      renderDetail(lote.id);
+      document.getElementById('detailPanel').classList.add('open');
+    });
     list.appendChild(row);
   }
 }
@@ -533,6 +555,7 @@ async function verificarCodigo(texto) {
       state.selectedLoteId = loteDoc.id;
       renderList();
       renderDetail(loteDoc.id);
+      document.getElementById('detailPanel').classList.add('open');
     });
     document.getElementById('qrEscanearOtro').addEventListener('click', reanudarEscaneo);
   } catch (e) {
@@ -560,6 +583,7 @@ function reanudarEscaneo() {
 
 document.getElementById('btnEscanearQr').addEventListener('click', abrirEscaner);
 document.getElementById('btnCerrarQr').addEventListener('click', cerrarEscaner);
+document.getElementById('closeDetailBtn').addEventListener('click', () => document.getElementById('detailPanel').classList.remove('open'));
 </script>
 </body>
 </html>
