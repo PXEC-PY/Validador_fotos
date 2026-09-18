@@ -331,20 +331,16 @@ function canvasToBlob(canvas, quality) {
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
 }
 
-// Dibuja un QR ya generado en la esquina inferior derecha del canvas, sobre
-// un fondo blanco semitransparente (deja ver algo de la foto detrás pero
-// mantiene contraste suficiente para que el QR se pueda seguir escaneando).
+// Dibuja un QR ya generado en la esquina inferior derecha del canvas. El QR
+// se genera con el blanco ya semitransparente y el negro sólido (ver
+// capturarYComprimir), así se integra con la foto sin perder legibilidad.
 function dibujarQr(canvas, qrCanvas) {
   const ctx = canvas.getContext('2d');
   const size = Math.round(canvas.width * 0.13);
-  const pad = Math.round(size * 0.12);
-  const x = canvas.width - size - pad * 2;
-  const y = canvas.height - size - pad * 2;
-  ctx.globalAlpha = 0.6;
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(x, y, size + pad * 2, size + pad * 2);
-  ctx.globalAlpha = 1;
-  ctx.drawImage(qrCanvas, x + pad, y + pad, size, size);
+  const pad = Math.round(size * 0.1);
+  const x = canvas.width - size - pad;
+  const y = canvas.height - size - pad;
+  ctx.drawImage(qrCanvas, x, y, size, size);
 }
 
 // Comprime el frame de la cámara (con el QR ya estampado) hasta que pese
@@ -353,9 +349,12 @@ function dibujarQr(canvas, qrCanvas) {
 // de Firestore (< 1MB). El QR se genera una sola vez por foto (no por cada
 // intento de compresión) para que esto no se sienta lento en el celular.
 async function capturarYComprimir(video, qrTexto) {
-  const qrCanvas = await QRCode.toCanvas(qrTexto, { margin: 0, width: 160 });
+  const qrCanvas = await QRCode.toCanvas(qrTexto, {
+    margin: 0, width: 160,
+    color: { dark: '#000000ff', light: '#ffffff4d' } // negro sólido, blanco ~30% opaco
+  });
   const dims = [1280, 960, 720, 480];
-  const qualities = [0.75, 0.6, 0.45, 0.3, 0.18];
+  const qualities = [0.9, 0.8, 0.65, 0.5, 0.35, 0.2];
   let lastBlob = null;
   for (const maxDim of dims) {
     const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));

@@ -42,5 +42,5 @@ export const MAX_FOTOS = 20;
 
 // Tamaño máximo (en bytes, del JPEG antes de convertir a base64) por foto,
 // para que cada documento de Firestore se mantenga bien por debajo de su
-// límite de 1MB.
-export const MAX_FOTO_BYTES = 600 * 1024;
+// límite de 1MB. 700KB en base64 pesa ~935KB, dejando margen de sobra.
+export const MAX_FOTO_BYTES = 700 * 1024;
