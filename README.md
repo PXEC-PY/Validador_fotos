@@ -5,9 +5,16 @@ datos. Tres páginas:
 
 - `index.html` — el cliente saca hasta 20 fotos del vehículo desde la cámara del
   navegador, confirma su ubicación (GPS del dispositivo, no editable a mano) y sube todo.
-  Al final le muestra un **código de ticket** para que lo mande por WhatsApp.
+  Cada foto queda con un **código QR quemado en la imagen** (`TICKET-NN`) generado con la
+  librería [`qrcode`](https://github.com/soldair/node-qrcode). Al final le muestra el
+  **código de ticket** para mandar por WhatsApp, y puede descargar todas las fotos en
+  `.zip` o guardarlas en la galería del celular (con el QR ya incluido).
 - `admin.html` — panel de administración: buscar un lote por ticket, revisar fotos +
-  ubicación, aprobar o rechazar, y exportar el lote aprobado como ZIP.
+  ubicación, aprobar o rechazar, exportar el lote aprobado como ZIP, y **escanear el QR**
+  de una foto con la cámara del dispositivo (librería [`jsQR`](https://github.com/cozmo/jsQR))
+  para contrastarla contra la fecha/hora y ubicación reales guardadas en Firestore — si
+  alguien reusa o falsifica una foto, el escaneo no va a coincidir con ningún registro
+  válido.
 - `analizador.html` — el analizador forense de metadatos original (sin cambios), útil
   para revisar a mano la captura de WhatsApp que manda el cliente.
 

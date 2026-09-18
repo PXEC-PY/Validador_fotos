@@ -3,21 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Analizador forense de metadatos de imágenes</title>
+<title>Analizador forense de metadatos — La Meridional Paraguaya S.A. de Seguros</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="shared.css">
 <style>
 :root{
-  --bg:#1b1e22; --bg-alt:#22262b; --panel:#26292f; --panel-2:#2c3036;
-  --border:#3a3f47; --border-soft:#33373d;
-  --text:#e6e8eb; --text-dim:#a7adb6; --text-faint:#767c86;
-  --accent:#5b8def; --accent-soft:#284066;
+  --bg:#f4f6f4; --bg-alt:#ffffff; --panel:#ffffff; --panel-2:#eef2ef;
+  --border:#d6dbd7; --border-soft:#e6e9e6;
+  --text:#1b2420; --text-dim:#525d56; --text-faint:#828d86;
+  --accent:#0f6632; --accent-soft:#e1f0e7;
+  --navy:#0e2a47; --navy-soft:#e6ecf2;
   --mono: "JetBrains Mono","SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
   --sans: "Inter","Segoe UI",system-ui,-apple-system,sans-serif;
-  --green:#3fb271; --green-bg:#16281f; --green-bd:#2b5c3f;
-  --yellow:#d1a53d; --yellow-bg:#2b2417; --yellow-bd:#5c4f2b;
-  --orange:#d6813a; --orange-bg:#2c2117; --orange-bd:#5e4128;
-  --red:#dd5b5b; --red-bg:#2c1a1a; --red-bd:#5c2e2e;
+  --green:#0f6632; --green-bg:#e1f0e7; --green-bd:#0f6632;
+  --yellow:#8a6d1a; --yellow-bg:#fbf3d8; --yellow-bd:#d1a53d;
+  --orange:#9a5217; --orange-bg:#fbe9d8; --orange-bd:#d6813a;
+  --red:#a02a2a; --red-bg:#fbe0e0; --red-bd:#dd5b5b;
   --radius:4px;
-  --focus: 2px solid #7db0ff;
+  --focus: 2px solid var(--navy);
 }
 *{box-sizing:border-box;}
 html,body{height:100%;}
@@ -41,12 +44,6 @@ button, select, input{font-family:inherit; font-size:inherit; color:inherit;}
   display:flex; align-items:center; gap:12px; padding:10px 16px;
   border-bottom:1px solid var(--border); background:var(--bg-alt);
   position:sticky; top:0; z-index:20;
-}
-.topbar__brand{font-weight:700; letter-spacing:.02em; font-size:14px; white-space:nowrap;}
-.topbar__brand .dim{color:var(--text-faint); font-weight:500;}
-.topbar__badge{
-  font-family:var(--mono); font-size:11px; color:var(--text-dim);
-  border:1px solid var(--border); border-radius:var(--radius); padding:2px 6px;
 }
 .topbar__spacer{flex:1;}
 .topbar__whatsapp-note{
@@ -255,7 +252,13 @@ button, select, input{font-family:inherit; font-size:inherit; color:inherit;}
 <div class="app">
 
   <header class="topbar">
-    <div class="topbar__brand">ANALIZADOR FORENSE DE METADATOS <span class="dim">// PXEC</span></div>
+    <div class="topbar__brand">
+      <img src="logo.png" alt="La Meridional" class="topbar__logo">
+      <div class="topbar__brandtext">
+        <div class="topbar__company">La Meridional Paraguaya S.A. de Seguros</div>
+        <div class="topbar__tool">Analizador forense de metadatos</div>
+      </div>
+    </div>
     <div class="topbar__badge">100% local · sin subida a servidor</div>
     <div class="topbar__spacer"></div>
     <div class="topbar__whatsapp-note">⚠ Para conservar EXIF, la foto debe enviarse por WhatsApp como <strong>documento</strong>, no como imagen.</div>

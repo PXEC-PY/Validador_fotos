@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Validador de fotos del vehículo</title>
+<title>Validador de fotos del vehículo — La Meridional Paraguaya S.A. de Seguros</title>
+<link rel="icon" href="logo.png">
 <link rel="stylesheet" href="shared.css">
 <style>
 .wrap{flex:1; display:flex; flex-direction:column; align-items:center; padding:20px 16px 40px;}
@@ -56,19 +57,28 @@
 
 /* Ticket */
 .ticket-box{
-  text-align:center; padding:28px 16px; border:1.5px dashed var(--accent); border-radius:8px;
-  background:var(--accent-soft); margin:18px 0;
+  text-align:center; padding:28px 16px; border:1.5px dashed var(--navy); border-radius:8px;
+  background:var(--navy-soft); margin:18px 0;
 }
-.ticket-code{font-family:var(--mono); font-size:34px; font-weight:700; letter-spacing:.08em; color:var(--text);}
+.ticket-code{font-family:var(--mono); font-size:34px; font-weight:700; letter-spacing:.08em; color:var(--navy);}
 .ticket-label{font-size:11.5px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.06em;}
 
 .error-msg{color:var(--red); font-size:12.5px; margin-top:8px;}
+.hidden{display:none !important;}
+.ticket-preview{font-size:12px; color:var(--text-dim); margin:2px 0 10px;}
+.ticket-preview:empty{display:none;}
 </style>
 </head>
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="topbar__brand">VALIDADOR DE FOTOS <span class="dim">// PXEC</span></div>
+    <div class="topbar__brand">
+      <img src="logo.png" alt="La Meridional" class="topbar__logo">
+      <div class="topbar__brandtext">
+        <div class="topbar__company">La Meridional Paraguaya S.A. de Seguros</div>
+        <div class="topbar__tool">Validador de fotos</div>
+      </div>
+    </div>
     <div class="topbar__spacer"></div>
     <div class="topbar__badge" id="stepBadge">paso 1 / 4</div>
   </header>
@@ -102,7 +112,8 @@
     <!-- 3. Cámara -->
     <section class="screen" id="screenCamara">
       <h1>Tomá las fotos del vehículo</h1>
-      <p>Sacá fotos desde distintos ángulos (frente, contrafrente, laterales, patente, daños si los hay). Podés borrar y repetir una foto puntual antes de subir el lote.</p>
+      <p>Sacá fotos desde distintos ángulos (frente, contrafrente, laterales, patente, daños si los hay). Podés borrar y repetir una foto puntual antes de subir el lote. Cada foto queda marcada con un código QR que identifica el ticket, la fecha/hora y la ubicación reales.</p>
+      <div class="ticket-preview mono" id="ticketPreview"></div>
       <div class="camera-box">
         <video id="video" autoplay playsinline muted></video>
         <div class="camera-counter" id="fotoCounter">0 / 20</div>
@@ -137,6 +148,11 @@
       <div class="actions">
         <a class="btn primary" id="btnWhatsapp" href="#" target="_blank" rel="noopener noreferrer" style="text-align:center; text-decoration:none;">Enviar por WhatsApp</a>
       </div>
+      <p style="margin-top:14px;">Tus fotos ya tienen el código QR del ticket marcado. Podés guardarlas para tu registro:</p>
+      <div class="actions">
+        <button class="btn" id="btnDescargarZip" type="button">Descargar fotos (.zip)</button>
+        <button class="btn hidden" id="btnGuardarGaleria" type="button">Guardar en galería</button>
+      </div>
       <div class="actions">
         <button class="btn" id="btnNuevoLote" type="button">Cargar otro vehículo</button>
       </div>
@@ -149,6 +165,8 @@
   </footer>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script type="module">
 import { auth, db, WHATSAPP_NUMERO, MAX_FOTOS, MAX_FOTO_BYTES } from './firebase-config.js';
 import { signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
@@ -160,7 +178,8 @@ document.getElementById('fotoCounter').textContent = `0 / ${MAX_FOTOS}`;
 const state = {
   patente: '',
   ubicacion: null,   // { lat, lng, accuracy, capturedAt }
-  fotos: [],          // [{ dataUrl, bytes, capturedAt }]
+  fotos: [],          // [{ dataUrl, bytes, capturedAt, shotNumber }]
+  nextShotNumber: 1,
   stream: null,
   loteId: null,
   ticketCode: null
@@ -244,6 +263,8 @@ function solicitarUbicacion() {
 document.getElementById('btnReintentarUbic').addEventListener('click', solicitarUbicacion);
 document.getElementById('btnConfirmarUbic').addEventListener('click', () => {
   if (!state.ubicacion) return;
+  if (!state.ticketCode) state.ticketCode = generarTicketCode();
+  document.getElementById('ticketPreview').textContent = 'Ticket: ' + state.ticketCode;
   showScreen('screenCamara');
   iniciarCamara();
 });
@@ -310,10 +331,25 @@ function canvasToBlob(canvas, quality) {
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
 }
 
-// Comprime el frame de la cámara hasta que pese menos de MAX_FOTO_BYTES,
-// bajando primero la calidad JPEG y, si no alcanza, el tamaño del lado más
-// largo. Así cada foto entra cómoda en un documento de Firestore (< 1MB).
-async function capturarYComprimir(video) {
+// Dibuja el QR (ticket-nº de foto) quemado en la esquina inferior derecha del
+// canvas, con un fondo blanco para que se lea sobre cualquier fondo.
+async function estamparQr(canvas, texto) {
+  const qrCanvas = await QRCode.toCanvas(texto, { margin: 0, width: 240 });
+  const ctx = canvas.getContext('2d');
+  const size = Math.round(canvas.width * 0.22);
+  const pad = Math.round(size * 0.1);
+  const x = canvas.width - size - pad * 2;
+  const y = canvas.height - size - pad * 2;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(x, y, size + pad * 2, size + pad * 2);
+  ctx.drawImage(qrCanvas, x + pad, y + pad, size, size);
+}
+
+// Comprime el frame de la cámara (con el QR ya estampado) hasta que pese
+// menos de MAX_FOTO_BYTES, bajando primero la calidad JPEG y, si no alcanza,
+// el tamaño del lado más largo. Así cada foto entra cómoda en un documento
+// de Firestore (< 1MB).
+async function capturarYComprimir(video, qrTexto) {
   const dims = [1280, 960, 720, 480];
   const qualities = [0.75, 0.6, 0.45, 0.3, 0.18];
   let lastBlob = null;
@@ -323,6 +359,7 @@ async function capturarYComprimir(video) {
     canvas.width = Math.round(video.videoWidth * scale);
     canvas.height = Math.round(video.videoHeight * scale);
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    await estamparQr(canvas, qrTexto);
     for (const q of qualities) {
       const blob = await canvasToBlob(canvas, q);
       if (!blob) continue;
@@ -334,13 +371,15 @@ async function capturarYComprimir(video) {
 }
 
 btnDisparar.addEventListener('click', async () => {
-  if (state.fotos.length >= MAX_FOTOS || !video.videoWidth) return;
+  if (state.fotos.length >= MAX_FOTOS || !video.videoWidth || !state.ticketCode) return;
   btnDisparar.disabled = true;
   try {
-    const blob = await capturarYComprimir(video);
+    const shotNumber = state.nextShotNumber++;
+    const qrTexto = `${state.ticketCode}-${String(shotNumber).padStart(2, '0')}`;
+    const blob = await capturarYComprimir(video, qrTexto);
     if (!blob) return;
     const dataUrl = await blobToDataURL(blob);
-    state.fotos.push({ dataUrl, bytes: blob.size, capturedAt: Date.now() });
+    state.fotos.push({ dataUrl, bytes: blob.size, capturedAt: Date.now(), shotNumber });
     renderThumbs();
   } finally {
     btnDisparar.disabled = state.fotos.length >= MAX_FOTOS;
@@ -386,7 +425,7 @@ document.getElementById('btnFinalizar').addEventListener('click', async () => {
       await signInAnonymously(auth);
     }
     const uid = auth.currentUser.uid;
-    state.ticketCode = generarTicketCode();
+    if (!state.ticketCode) state.ticketCode = generarTicketCode(); // no debería pasar: se genera al entrar a la cámara
 
     const loteRef = doc(collection(db, 'lotes'));
     state.loteId = loteRef.id;
@@ -405,12 +444,12 @@ document.getElementById('btnFinalizar').addEventListener('click', async () => {
 
     for (let i = 0; i < state.fotos.length; i++) {
       const foto = state.fotos[i];
-      const fotoId = String(i + 1).padStart(2, '0');
+      const fotoId = String(foto.shotNumber).padStart(2, '0');
       await setDoc(doc(db, 'lotes', state.loteId, 'fotos', fotoId), {
         dataUrl: foto.dataUrl,
         contentType: 'image/jpeg',
         capturedAt: foto.capturedAt,
-        order: i + 1
+        order: foto.shotNumber
       });
       updateProgress(`Foto ${i + 1} / ${state.fotos.length} subida`);
     }
@@ -421,10 +460,57 @@ document.getElementById('btnFinalizar').addEventListener('click', async () => {
       ? `https://wa.me/${WHATSAPP_NUMERO}?text=${waMsg}`
       : '#';
     document.getElementById('btnWhatsapp').href = waHref;
+
+    const btnGaleria = document.getElementById('btnGuardarGaleria');
+    const archivosCompartibles = state.fotos.map((foto, idx) =>
+      dataURLtoFile(foto.dataUrl, `${state.ticketCode}-${String(foto.shotNumber).padStart(2, '0')}.jpg`)
+    );
+    if (navigator.canShare && navigator.canShare({ files: archivosCompartibles })) {
+      btnGaleria.classList.remove('hidden');
+      btnGaleria.onclick = () => navigator.share({ files: archivosCompartibles, title: 'Fotos ' + state.ticketCode }).catch(() => {});
+    } else {
+      btnGaleria.classList.add('hidden');
+    }
+
     showScreen('screenTicket');
   } catch (e) {
     log.textContent = 'Error al subir: ' + (e && e.message ? e.message : String(e));
     label.textContent = 'Ocurrió un error. Volvé a intentar.';
+  }
+});
+
+function dataURLtoFile(dataUrl, filename) {
+  const [header, base64] = dataUrl.split(',');
+  const mime = /data:(.*?);base64/.exec(header)[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], filename, { type: mime });
+}
+
+document.getElementById('btnDescargarZip').addEventListener('click', async () => {
+  const btn = document.getElementById('btnDescargarZip');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Generando ZIP…';
+  try {
+    const zip = new JSZip();
+    for (const foto of state.fotos) {
+      const base64 = foto.dataUrl.split(',')[1] || '';
+      zip.file(`${state.ticketCode}-${String(foto.shotNumber).padStart(2, '0')}.jpg`, base64, { base64: true });
+    }
+    const content = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(content);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${state.ticketCode}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
   }
 });
 
@@ -433,7 +519,9 @@ document.getElementById('btnNuevoLote').addEventListener('click', () => {
   state.ubicacion = null;
   state.loteId = null;
   state.ticketCode = null;
+  state.nextShotNumber = 1;
   document.getElementById('patenteInput').value = '';
+  document.getElementById('ticketPreview').textContent = '';
   showScreen('screenInicio');
 });
 
