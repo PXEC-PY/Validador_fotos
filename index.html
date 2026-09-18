@@ -148,10 +148,13 @@
       <div class="actions">
         <a class="btn primary" id="btnWhatsapp" href="#" target="_blank" rel="noopener noreferrer" style="text-align:center; text-decoration:none;">Enviar por WhatsApp</a>
       </div>
-      <p style="margin-top:14px;">Tus fotos ya tienen el código QR del ticket marcado. Podés guardarlas o compartirlas (incluye WhatsApp):</p>
+      <p style="margin-top:14px;">Tus fotos ya tienen el código QR del ticket marcado:</p>
       <div class="actions">
-        <button class="btn" id="btnDescargarZip" type="button">Descargar fotos (.zip)</button>
-        <button class="btn hidden" id="btnGuardarGaleria" type="button">Compartir / guardar fotos</button>
+        <button class="btn" id="btnGuardarFotos" type="button">Guardar fotos</button>
+        <button class="btn hidden" id="btnCompartirFotos" type="button">Compartir</button>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnDescargarZip" type="button">Descargar todo (.zip)</button>
       </div>
       <div class="actions">
         <button class="btn" id="btnNuevoLote" type="button">Cargar otro vehículo</button>
@@ -466,19 +469,33 @@ document.getElementById('btnFinalizar').addEventListener('click', async () => {
     const waMsg = encodeURIComponent(`Hola, envío el ticket de mis fotos: ${state.ticketCode}`);
     document.getElementById('btnWhatsapp').href = `https://wa.me/?text=${waMsg}`;
 
-    const btnGaleria = document.getElementById('btnGuardarGaleria');
-    const archivosCompartibles = state.fotos.map((foto, idx) =>
+    const archivosCompartibles = state.fotos.map((foto) =>
       dataURLtoFile(foto.dataUrl, `${state.ticketCode}-${String(foto.shotNumber).padStart(2, '0')}.jpg`)
     );
+
+    document.getElementById('btnGuardarFotos').onclick = () => {
+      state.fotos.forEach((foto, i) => {
+        setTimeout(() => {
+          const a = document.createElement('a');
+          a.href = foto.dataUrl;
+          a.download = `${state.ticketCode}-${String(foto.shotNumber).padStart(2, '0')}.jpg`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }, i * 150); // pequeño delay entre cada una para que el navegador no las bloquee
+      });
+    };
+
+    const btnCompartir = document.getElementById('btnCompartirFotos');
     if (navigator.canShare && navigator.canShare({ files: archivosCompartibles })) {
-      btnGaleria.classList.remove('hidden');
-      btnGaleria.onclick = () => navigator.share({
+      btnCompartir.classList.remove('hidden');
+      btnCompartir.onclick = () => navigator.share({
         files: archivosCompartibles,
         title: 'Fotos ' + state.ticketCode,
         text: `Ticket ${state.ticketCode}`
       }).catch(() => {});
     } else {
-      btnGaleria.classList.add('hidden');
+      btnCompartir.classList.add('hidden');
     }
 
     showScreen('screenTicket');
