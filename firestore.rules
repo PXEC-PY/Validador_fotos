@@ -1,0 +1,51 @@
+rules_version = '2';
+
+// Pegar este contenido en Firebase Console > Firestore Database > Reglas.
+// No se puede desplegar desde acá porque no hay Firebase CLI instalada en esta
+// máquina — ver README.md para los pasos manuales.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Un doc por admin autorizado, con ID = uid de Firebase Auth de esa persona.
+    // Se crean a mano desde la consola (ver README.md), nunca desde el cliente.
+    match /admins/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /lotes/{loteId} {
+      // El cliente (usuario anónimo) crea su propio lote como 'pendiente'.
+      allow create: if request.auth != null
+        && request.resource.data.creatorUid == request.auth.uid
+        && request.resource.data.status == 'pendiente';
+
+      // Solo el dueño del lote o un admin pueden leerlo.
+      allow read: if request.auth != null
+        && (resource.data.creatorUid == request.auth.uid || isAdmin());
+
+      // Solo un admin puede actualizar (aprobar/rechazar), y no puede cambiar
+      // de dueño ni de ticket.
+      allow update: if isAdmin()
+        && request.resource.data.creatorUid == resource.data.creatorUid
+        && request.resource.data.ticketCode == resource.data.ticketCode;
+
+      allow delete: if false;
+
+      match /fotos/{fotoId} {
+        allow create: if request.auth != null
+          && get(/databases/$(database)/documents/lotes/$(loteId)).data.creatorUid == request.auth.uid;
+
+        allow read: if request.auth != null
+          && (get(/databases/$(database)/documents/lotes/$(loteId)).data.creatorUid == request.auth.uid || isAdmin());
+
+        allow update, delete: if false;
+      }
+    }
+  }
+}

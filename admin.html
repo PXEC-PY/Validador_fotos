@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel admin — Validador de fotos</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.hidden{display:none !important;}
+
+/* ---------- Login ---------- */
+.login-wrap{flex:1; display:flex; align-items:center; justify-content:center; padding:20px;}
+.login-box{width:100%; max-width:340px;}
+.login-box h1{font-size:16px; margin:0 0 4px;}
+.login-box p{font-size:12.5px; color:var(--text-dim); margin:4px 0 16px;}
+.field{margin:12px 0;}
+.field label{display:block; font-size:12.5px; color:var(--text-dim); margin-bottom:5px;}
+.field input{
+  width:100%; background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius);
+  padding:9px 11px; color:var(--text);
+}
+
+/* ---------- Layout ---------- */
+.layout{display:flex; flex:1; min-height:0;}
+.col-main{flex:1; min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--border);}
+.col-detail{width:420px; flex-shrink:0; background:var(--bg-alt); overflow-y:auto; max-height:calc(100vh - 49px);}
+
+.toolbar{display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--border-soft); background:var(--bg-alt);}
+.toolbar input[type="search"]{
+  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  padding:6px 10px; color:var(--text); min-width:160px; flex:1;
+}
+.chip{border:1px solid var(--border); background:var(--panel); color:var(--text-dim); padding:5px 10px; border-radius:999px; cursor:pointer; font-size:12px; white-space:nowrap;}
+.chip[aria-pressed="true"]{border-color:var(--accent); color:var(--text); background:var(--accent-soft);}
+
+.list{flex:1; overflow-y:auto; padding:4px 10px 20px;}
+.empty-state{margin:40px auto; max-width:420px; text-align:center; color:var(--text-dim); padding:0 20px;}
+.row{display:flex; flex-direction:column; gap:4px; padding:10px; margin:4px 0; border-radius:var(--radius); border:1px solid transparent; cursor:pointer; background:transparent;}
+.row:hover{background:var(--panel);}
+.row.selected{background:var(--panel-2); border-color:var(--accent);}
+.row__top{display:flex; justify-content:space-between; align-items:center; gap:8px;}
+.row__ticket{font-family:var(--mono); font-weight:700; font-size:14px;}
+.row__sub{font-size:11.5px; color:var(--text-faint); font-family:var(--mono);}
+
+/* ---------- Detail ---------- */
+.detail{padding:16px;}
+.detail__empty{color:var(--text-faint); font-size:13px; padding:40px 16px; text-align:center;}
+.detail__title{font-family:var(--mono); font-size:20px; font-weight:700; margin-bottom:2px;}
+.section{border-top:1px solid var(--border-soft); padding:12px 0;}
+.section h3{margin:0 0 6px; font-size:12.5px; color:var(--text); text-transform:uppercase; letter-spacing:.04em;}
+
+.foto-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:8px; margin-top:8px;}
+.foto-grid figure{margin:0; background:var(--panel); border:1px solid var(--border); border-radius:4px; overflow:hidden;}
+.foto-grid img{width:100%; aspect-ratio:3/4; object-fit:cover; display:block;}
+.foto-grid figcaption{font-size:10px; color:var(--text-faint); font-family:var(--mono); padding:3px 5px;}
+
+textarea#adminNota{
+  width:100%; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  padding:8px; color:var(--text); font-family:inherit; font-size:12.5px; min-height:56px; resize:vertical;
+}
+.actions-row{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
+.actions-row .btn{flex:1; min-width:120px;}
+
+.status-line{font-size:12px; color:var(--text-faint); margin-top:10px;}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- Login -->
+  <div class="login-wrap" id="loginWrap">
+    <div class="card login-box">
+      <h1>Panel admin</h1>
+      <p>Iniciá sesión para revisar los lotes de fotos subidos por los clientes.</p>
+      <div class="field"><label for="emailInput">Email</label><input type="email" id="emailInput" autocomplete="username"></div>
+      <div class="field"><label for="passInput">Contraseña</label><input type="password" id="passInput" autocomplete="current-password"></div>
+      <button class="btn primary" id="btnLogin" type="button" style="width:100%; margin-top:6px;">Ingresar</button>
+      <div class="error-msg" id="loginError" style="color:var(--red); font-size:12.5px; margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <!-- No autorizado -->
+  <div class="login-wrap hidden" id="noAuthWrap">
+    <div class="card login-box">
+      <h1>No autorizado</h1>
+      <p>Tu cuenta inició sesión correctamente pero no tiene permisos de administrador. Pedile a otro admin que te agregue.</p>
+      <button class="btn" id="btnLogoutNoAuth" type="button">Cerrar sesión</button>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div class="hidden" id="dashboard" style="display:flex; flex-direction:column; flex:1; min-height:0;">
+    <header class="topbar">
+      <div class="topbar__brand">PANEL ADMIN <span class="dim">// PXEC</span></div>
+      <div class="topbar__spacer"></div>
+      <a href="analizador.html" class="topbar__link" target="_blank" rel="noopener noreferrer">Analizador de metadatos ↗</a>
+      <button class="btn" id="btnLogout" type="button" style="margin-left:8px;">Cerrar sesión</button>
+    </header>
+
+    <div class="layout">
+      <main class="col-main">
+        <div class="toolbar">
+          <input type="search" id="searchInput" placeholder="Buscar por código de ticket o patente…" aria-label="Buscar">
+          <button class="chip" data-status="todos" aria-pressed="true" type="button">Todos</button>
+          <button class="chip" data-status="pendiente" aria-pressed="false" type="button">Pendientes</button>
+          <button class="chip" data-status="aprobado" aria-pressed="false" type="button">Aprobados</button>
+          <button class="chip" data-status="rechazado" aria-pressed="false" type="button">Rechazados</button>
+        </div>
+        <div class="list" id="list">
+          <div class="empty-state" id="emptyState">Todavía no hay lotes cargados.</div>
+        </div>
+      </main>
+
+      <aside class="col-detail" id="detailPanel">
+        <div class="detail" id="detailContent">
+          <div class="detail__empty">Seleccioná un lote de la lista para ver su detalle.</div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script type="module">
+import { auth, db } from './firebase-config.js';
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { collection, query, orderBy, onSnapshot, doc, getDoc, getDocs, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+const loginWrap = document.getElementById('loginWrap');
+const noAuthWrap = document.getElementById('noAuthWrap');
+const dashboard = document.getElementById('dashboard');
+
+const state = { lotes: [], selectedLoteId: null, statusFilter: 'todos', search: '' };
+let unsubscribeLotes = null;
+
+/* ---------------------------------------------------------------------- */
+/* Auth                                                                    */
+/* ---------------------------------------------------------------------- */
+
+document.getElementById('btnLogin').addEventListener('click', async () => {
+  const email = document.getElementById('emailInput').value.trim();
+  const pass = document.getElementById('passInput').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+  } catch (e) {
+    errEl.textContent = 'No se pudo iniciar sesión: revisá el email y la contraseña.';
+  }
+});
+
+document.getElementById('btnLogout').addEventListener('click', () => signOut(auth));
+document.getElementById('btnLogoutNoAuth').addEventListener('click', () => signOut(auth));
+
+onAuthStateChanged(auth, async (user) => {
+  loginWrap.classList.add('hidden');
+  noAuthWrap.classList.add('hidden');
+  dashboard.classList.add('hidden');
+  if (unsubscribeLotes) { unsubscribeLotes(); unsubscribeLotes = null; }
+
+  if (!user) {
+    loginWrap.classList.remove('hidden');
+    return;
+  }
+  const adminSnap = await getDoc(doc(db, 'admins', user.uid));
+  if (!adminSnap.exists()) {
+    noAuthWrap.classList.remove('hidden');
+    return;
+  }
+  dashboard.classList.remove('hidden');
+  suscribirLotes();
+});
+
+/* ---------------------------------------------------------------------- */
+/* Lista de lotes                                                          */
+/* ---------------------------------------------------------------------- */
+
+function suscribirLotes() {
+  const q = query(collection(db, 'lotes'), orderBy('createdAt', 'desc'));
+  unsubscribeLotes = onSnapshot(q, (snap) => {
+    state.lotes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderList();
+    if (state.selectedLoteId) renderDetail(state.selectedLoteId);
+  });
+}
+
+function matchesFilters(lote) {
+  if (state.statusFilter !== 'todos' && lote.status !== state.statusFilter) return false;
+  if (state.search) {
+    const s = state.search.toLowerCase();
+    const inTicket = (lote.ticketCode || '').toLowerCase().includes(s);
+    const inPatente = (lote.patente || '').toLowerCase().includes(s);
+    if (!inTicket && !inPatente) return false;
+  }
+  return true;
+}
+
+function statusBadge(status) {
+  if (status === 'aprobado') return '<span class="badge green">🟢 Aprobado</span>';
+  if (status === 'rechazado') return '<span class="badge red">🔴 Rechazado</span>';
+  return '<span class="badge yellow">🟡 Pendiente</span>';
+}
+
+function renderList() {
+  const list = document.getElementById('list');
+  const emptyState = document.getElementById('emptyState');
+  Array.from(list.querySelectorAll('.row')).forEach(r => r.remove());
+
+  const visible = state.lotes.filter(matchesFilters);
+  if (state.lotes.length === 0) {
+    emptyState.textContent = 'Todavía no hay lotes cargados.';
+    emptyState.style.display = '';
+    return;
+  }
+  if (visible.length === 0) {
+    emptyState.textContent = 'Ningún lote coincide con el filtro/búsqueda.';
+    emptyState.style.display = '';
+    return;
+  }
+  emptyState.style.display = 'none';
+
+  for (const lote of visible) {
+    const row = document.createElement('div');
+    row.className = 'row' + (lote.id === state.selectedLoteId ? ' selected' : '');
+    const fecha = lote.createdAt && lote.createdAt.toDate ? lote.createdAt.toDate().toLocaleString('es-AR') : '—';
+    row.innerHTML = `
+      <div class="row__top">
+        <span class="row__ticket">${lote.ticketCode || '—'}</span>
+        ${statusBadge(lote.status)}
+      </div>
+      <div class="row__sub">${lote.patente || 'sin patente'} · ${lote.fotoCount || 0} fotos · ${fecha}</div>
+    `;
+    row.addEventListener('click', () => { state.selectedLoteId = lote.id; renderList(); renderDetail(lote.id); });
+    list.appendChild(row);
+  }
+}
+
+document.getElementById('searchInput').addEventListener('input', (e) => { state.search = e.target.value; renderList(); });
+document.querySelectorAll('.chip[data-status]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.chip[data-status]').forEach(c => c.setAttribute('aria-pressed', 'false'));
+    chip.setAttribute('aria-pressed', 'true');
+    state.statusFilter = chip.dataset.status;
+    renderList();
+  });
+});
+
+/* ---------------------------------------------------------------------- */
+/* Detalle de un lote                                                      */
+/* ---------------------------------------------------------------------- */
+
+async function renderDetail(loteId) {
+  const content = document.getElementById('detailContent');
+  const lote = state.lotes.find(l => l.id === loteId);
+  if (!lote) { content.innerHTML = '<div class="detail__empty">Lote no encontrado.</div>'; return; }
+
+  content.innerHTML = `<div class="detail__empty">Cargando fotos…</div>`;
+
+  const fotosSnap = await getDocs(collection(db, 'lotes', loteId, 'fotos'));
+  const fotos = fotosSnap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order || 0) - (b.order || 0));
+
+  if (state.selectedLoteId !== loteId) return; // el admin cambió de selección mientras cargaba
+
+  const fecha = lote.createdAt && lote.createdAt.toDate ? lote.createdAt.toDate().toLocaleString('es-AR') : '—';
+  const ubic = lote.ubicacion;
+
+  content.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'detail__title';
+  title.textContent = lote.ticketCode || '—';
+  content.appendChild(title);
+
+  const badgeRow = document.createElement('div');
+  badgeRow.innerHTML = statusBadge(lote.status);
+  content.appendChild(badgeRow);
+
+  const infoSection = document.createElement('div');
+  infoSection.className = 'section';
+  infoSection.innerHTML = `
+    <h3>Datos del lote</h3>
+    <table class="kv">
+      <tr><td>Patente</td><td>${lote.patente || '—'}</td></tr>
+      <tr><td>Fecha de carga</td><td>${fecha}</td></tr>
+      <tr><td>Cantidad de fotos</td><td>${lote.fotoCount || fotos.length}</td></tr>
+      <tr><td>Navegador (user agent)</td><td style="font-size:10.5px;">${lote.userAgent || '—'}</td></tr>
+    </table>`;
+  content.appendChild(infoSection);
+
+  const ubicSection = document.createElement('div');
+  ubicSection.className = 'section';
+  if (ubic) {
+    ubicSection.innerHTML = `
+      <h3>Ubicación</h3>
+      <table class="kv">
+        <tr><td>Coordenadas</td><td>${ubic.lat.toFixed(6)}, ${ubic.lng.toFixed(6)}</td></tr>
+        <tr><td>Precisión</td><td>±${Math.round(ubic.accuracy)} m</td></tr>
+      </table>
+      <div class="btn-row" style="margin-top:6px;"><a class="link-btn" href="https://www.google.com/maps?q=${ubic.lat},${ubic.lng}" target="_blank" rel="noopener noreferrer">Ver en el mapa</a></div>`;
+  } else {
+    ubicSection.innerHTML = '<h3>Ubicación</h3><p class="no-data">Sin datos de ubicación.</p>';
+  }
+  content.appendChild(ubicSection);
+
+  const fotosSection = document.createElement('div');
+  fotosSection.className = 'section';
+  const grid = document.createElement('div');
+  grid.className = 'foto-grid';
+  for (const foto of fotos) {
+    const fig = document.createElement('figure');
+    const img = document.createElement('img');
+    img.src = foto.dataUrl || '';
+    img.alt = 'Foto ' + foto.order;
+    fig.appendChild(img);
+    const cap = document.createElement('figcaption');
+    cap.textContent = '#' + foto.order + (foto.capturedAt ? ' · ' + new Date(foto.capturedAt).toLocaleTimeString('es-AR') : '');
+    fig.appendChild(cap);
+    grid.appendChild(fig);
+  }
+  fotosSection.innerHTML = '<h3>Fotos</h3>';
+  fotosSection.appendChild(grid);
+  content.appendChild(fotosSection);
+
+  const actionsSection = document.createElement('div');
+  actionsSection.className = 'section';
+  actionsSection.innerHTML = `
+    <h3>Revisión</h3>
+    <textarea id="adminNota" placeholder="Nota opcional (ej. motivo de rechazo)">${lote.adminNota || ''}</textarea>
+    <div class="actions-row">
+      <button class="btn primary" id="btnAprobar" type="button">Aprobar</button>
+      <button class="btn danger" id="btnRechazar" type="button">Rechazar</button>
+    </div>
+    <div class="actions-row">
+      <button class="btn" id="btnExportZip" type="button" ${lote.status === 'aprobado' ? '' : 'disabled'}>Exportar ZIP</button>
+    </div>
+    <div class="status-line" id="revisionLine">
+      ${lote.revisadoAt && lote.revisadoAt.toDate ? 'Última revisión: ' + lote.revisadoAt.toDate().toLocaleString('es-AR') : ''}
+    </div>
+  `;
+  content.appendChild(actionsSection);
+
+  document.getElementById('btnAprobar').addEventListener('click', () => actualizarEstado(loteId, 'aprobado'));
+  document.getElementById('btnRechazar').addEventListener('click', () => actualizarEstado(loteId, 'rechazado'));
+  document.getElementById('btnExportZip').addEventListener('click', () => exportarZip(lote, fotos));
+}
+
+async function actualizarEstado(loteId, status) {
+  const nota = document.getElementById('adminNota').value.trim();
+  await updateDoc(doc(db, 'lotes', loteId), {
+    status,
+    adminNota: nota || null,
+    revisadoPor: auth.currentUser.uid,
+    revisadoAt: serverTimestamp()
+  });
+}
+
+/* ---------------------------------------------------------------------- */
+/* Exportar ZIP                                                            */
+/* ---------------------------------------------------------------------- */
+
+async function exportarZip(lote, fotos) {
+  const btn = document.getElementById('btnExportZip');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Generando ZIP…';
+  try {
+    const zip = new JSZip();
+    for (const foto of fotos) {
+      if (!foto.dataUrl) continue;
+      const base64 = foto.dataUrl.split(',')[1] || '';
+      zip.file(`${lote.ticketCode}_${String(foto.order).padStart(2, '0')}.jpg`, base64, { base64: true });
+    }
+    const metadata = {
+      ticketCode: lote.ticketCode,
+      patente: lote.patente || null,
+      ubicacion: lote.ubicacion || null,
+      status: lote.status,
+      adminNota: lote.adminNota || null,
+      fotos: fotos.map(f => ({ orden: f.order, capturedAt: f.capturedAt ? new Date(f.capturedAt).toISOString() : null }))
+    };
+    zip.file('metadata.json', JSON.stringify(metadata, null, 2));
+
+    const content = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(content);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${lote.ticketCode}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (e) {
+    alert('Error al generar el ZIP: ' + (e && e.message ? e.message : String(e)));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+</script>
+</body>
+</html>

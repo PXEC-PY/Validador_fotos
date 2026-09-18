@@ -3,1525 +3,302 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Analizador forense de metadatos de imágenes</title>
+<title>Validador de fotos del vehículo</title>
+<link rel="stylesheet" href="shared.css">
 <style>
-:root{
-  --bg:#1b1e22; --bg-alt:#22262b; --panel:#26292f; --panel-2:#2c3036;
-  --border:#3a3f47; --border-soft:#33373d;
-  --text:#e6e8eb; --text-dim:#a7adb6; --text-faint:#767c86;
-  --accent:#5b8def; --accent-soft:#284066;
-  --mono: "JetBrains Mono","SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
-  --sans: "Inter","Segoe UI",system-ui,-apple-system,sans-serif;
-  --green:#3fb271; --green-bg:#16281f; --green-bd:#2b5c3f;
-  --yellow:#d1a53d; --yellow-bg:#2b2417; --yellow-bd:#5c4f2b;
-  --orange:#d6813a; --orange-bg:#2c2117; --orange-bd:#5e4128;
-  --red:#dd5b5b; --red-bg:#2c1a1a; --red-bd:#5c2e2e;
-  --radius:4px;
-  --focus: 2px solid #7db0ff;
+.wrap{flex:1; display:flex; flex-direction:column; align-items:center; padding:20px 16px 40px;}
+.screen{width:100%; max-width:480px; display:none;}
+.screen.active{display:block;}
+.screen h1{font-size:17px; margin:0 0 8px;}
+.screen p{font-size:13px; color:var(--text-dim); margin:6px 0;}
+.field{margin:16px 0;}
+.field label{display:block; font-size:12.5px; color:var(--text-dim); margin-bottom:5px;}
+.field input[type="text"]{
+  width:100%; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  padding:10px 12px; color:var(--text);
 }
-*{box-sizing:border-box;}
-html,body{height:100%;}
-body{
-  margin:0; background:var(--bg); color:var(--text);
-  font-family:var(--sans); font-size:14px; line-height:1.45;
-  -webkit-font-smoothing:antialiased;
+.actions{display:flex; gap:8px; margin-top:18px; flex-wrap:wrap;}
+.actions .btn{flex:1; min-width:140px;}
+
+.status-box{display:flex; align-items:center; gap:10px; padding:14px; margin:14px 0;}
+.status-box.ok{border-color:var(--green-bd); background:var(--green-bg); color:var(--green);}
+.status-box.warn{border-color:var(--yellow-bd); background:var(--yellow-bg); color:var(--yellow);}
+.status-box.bad{border-color:var(--red-bd); background:var(--red-bg); color:var(--red);}
+
+.ubic-precision{font-size:12px; margin-top:2px;}
+
+/* Cámara */
+.camera-box{
+  position:relative; width:100%; aspect-ratio:3/4; background:#000; border-radius:6px;
+  overflow:hidden; border:1px solid var(--border);
 }
-::selection{background:var(--accent-soft);}
-a{color:var(--accent);}
-button, select, input{font-family:inherit; font-size:inherit; color:inherit;}
-.mono{font-family:var(--mono);}
-:focus-visible{outline:var(--focus); outline-offset:2px;}
-@media (prefers-reduced-motion: reduce){
-  *{animation-duration:0.001ms !important; animation-iteration-count:1 !important; transition-duration:0.001ms !important;}
+.camera-box video{width:100%; height:100%; object-fit:cover; display:block;}
+.camera-counter{
+  position:absolute; top:8px; left:8px; background:rgba(0,0,0,.55); color:#fff;
+  font-family:var(--mono); font-size:12px; padding:3px 8px; border-radius:999px;
+}
+.shutter-row{display:flex; justify-content:center; margin:16px 0;}
+.shutter-btn{
+  width:64px; height:64px; border-radius:50%; background:var(--accent); border:4px solid #fff;
+  cursor:pointer;
+}
+.shutter-btn:disabled{opacity:.4; cursor:not-allowed;}
+.thumb-strip{display:flex; flex-wrap:wrap; gap:8px; margin:10px 0;}
+.thumb{position:relative; width:64px; height:64px; border-radius:4px; overflow:hidden; border:1px solid var(--border);}
+.thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+.thumb button{
+  position:absolute; top:2px; right:2px; width:18px; height:18px; border-radius:50%;
+  background:rgba(20,20,20,.75); color:#fff; border:none; font-size:11px; line-height:1; cursor:pointer;
 }
 
-/* ---------- App shell ---------- */
-.app{display:flex; flex-direction:column; min-height:100vh;}
-.topbar{
-  display:flex; align-items:center; gap:12px; padding:10px 16px;
-  border-bottom:1px solid var(--border); background:var(--bg-alt);
-  position:sticky; top:0; z-index:20;
-}
-.topbar__brand{font-weight:700; letter-spacing:.02em; font-size:14px; white-space:nowrap;}
-.topbar__brand .dim{color:var(--text-faint); font-weight:500;}
-.topbar__badge{
-  font-family:var(--mono); font-size:11px; color:var(--text-dim);
-  border:1px solid var(--border); border-radius:var(--radius); padding:2px 6px;
-}
-.topbar__spacer{flex:1;}
-.topbar__whatsapp-note{
-  font-size:12px; color:var(--yellow); border:1px solid var(--yellow-bd); background:var(--yellow-bg);
-  padding:5px 10px; border-radius:var(--radius); max-width:520px;
-}
+/* Subida */
+.upload-log{font-size:11.5px; color:var(--text-faint); font-family:var(--mono); margin-top:8px;}
 
-.layout{display:flex; flex:1; min-height:0;}
-.col-main{flex:1; min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--border);}
-.col-detail{
-  width:420px; flex-shrink:0; background:var(--bg-alt);
-  overflow-y:auto; max-height:calc(100vh - 49px);
+/* Ticket */
+.ticket-box{
+  text-align:center; padding:28px 16px; border:1.5px dashed var(--accent); border-radius:8px;
+  background:var(--accent-soft); margin:18px 0;
 }
+.ticket-code{font-family:var(--mono); font-size:34px; font-weight:700; letter-spacing:.08em; color:var(--text);}
+.ticket-label{font-size:11.5px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.06em;}
 
-/* ---------- Dropzone ---------- */
-.dropzone{
-  margin:14px 16px 8px; border:1.5px dashed var(--border); border-radius:6px;
-  padding:20px; text-align:center; color:var(--text-dim); background:var(--panel);
-  transition:border-color .15s, background .15s;
-}
-.dropzone.dragover{border-color:var(--accent); background:var(--accent-soft);}
-.dropzone h2{margin:0 0 4px; font-size:14px; color:var(--text);}
-.dropzone p{margin:2px 0; font-size:12.5px;}
-.dropzone__btn{
-  margin-top:10px; background:var(--panel-2); border:1px solid var(--border); color:var(--text);
-  padding:7px 14px; border-radius:var(--radius); cursor:pointer;
-}
-.dropzone__btn:hover{border-color:var(--accent);}
-#fileInput{display:none;}
-
-.progress-wrap{margin:0 16px 8px; display:none;}
-.progress-wrap.active{display:block;}
-.progress-bar{height:6px; background:var(--panel-2); border-radius:3px; overflow:hidden; border:1px solid var(--border);}
-.progress-bar__fill{height:100%; width:0%; background:var(--accent); transition:width .12s linear;}
-.progress-label{font-size:11.5px; color:var(--text-dim); margin-top:4px; font-family:var(--mono);}
-
-/* ---------- Toolbar ---------- */
-.toolbar{
-  display:flex; flex-wrap:wrap; gap:8px; align-items:center;
-  padding:8px 16px; border-bottom:1px solid var(--border-soft); background:var(--bg-alt);
-}
-.toolbar input[type="search"]{
-  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
-  padding:6px 10px; color:var(--text); min-width:160px; flex:1;
-}
-.toolbar select{
-  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
-  padding:6px 8px; color:var(--text);
-}
-.chip{
-  border:1px solid var(--border); background:var(--panel); color:var(--text-dim);
-  padding:5px 10px; border-radius:999px; cursor:pointer; font-size:12px; white-space:nowrap;
-}
-.chip[aria-pressed="true"]{border-color:var(--accent); color:var(--text); background:var(--accent-soft);}
-.toolbar__count{font-size:12px; color:var(--text-faint); margin-left:auto; font-family:var(--mono);}
-.export-menu{position:relative;}
-.export-btn{background:var(--panel-2); border:1px solid var(--border); border-radius:var(--radius); padding:6px 10px; cursor:pointer;}
-.export-dropdown{
-  display:none; position:absolute; right:0; top:calc(100% + 4px); background:var(--panel);
-  border:1px solid var(--border); border-radius:var(--radius); min-width:220px; z-index:30;
-  box-shadow:0 6px 20px rgba(0,0,0,.4);
-}
-.export-dropdown.open{display:block;}
-.export-dropdown button{
-  display:block; width:100%; text-align:left; background:none; border:none; color:var(--text);
-  padding:9px 12px; cursor:pointer; font-size:13px;
-}
-.export-dropdown button:hover{background:var(--panel-2);}
-.export-dropdown .hint{font-size:11px; color:var(--text-faint); padding:0 12px 8px; margin:0;}
-
-/* ---------- List ---------- */
-.list{flex:1; overflow-y:auto; padding:4px 10px 20px;}
-.list:focus-visible{outline:none;}
-.empty-state{
-  margin:40px auto; max-width:520px; text-align:center; color:var(--text-dim); padding:0 20px;
-}
-.empty-state h2{color:var(--text); font-size:16px; margin-bottom:10px;}
-.empty-state p{font-size:13px; margin:6px 0;}
-.empty-state .warn{
-  margin-top:16px; text-align:left; border:1px solid var(--yellow-bd); background:var(--yellow-bg);
-  color:var(--yellow); padding:10px 12px; border-radius:var(--radius); font-size:12.5px;
-}
-
-.row{
-  display:flex; gap:10px; align-items:center; padding:8px; margin:4px 0; border-radius:var(--radius);
-  border:1px solid transparent; cursor:pointer; background:transparent;
-}
-.row:hover{background:var(--panel);}
-.row.selected{background:var(--panel-2); border-color:var(--accent);}
-.row.compare-a{outline:2px solid #5b8def; outline-offset:-2px;}
-.row.compare-b{outline:2px solid #b26fe0; outline-offset:-2px;}
-.row__thumb{
-  width:64px; height:64px; flex-shrink:0; border-radius:3px; overflow:hidden; background:var(--panel-2);
-  display:flex; align-items:center; justify-content:center; border:1px solid var(--border-soft);
-}
-.row__thumb img{width:100%; height:100%; object-fit:cover; display:block;}
-.row__thumb .err-icon{color:var(--red); font-size:18px;}
-.row__body{min-width:0; flex:1;}
-.row__name{font-family:var(--mono); font-size:12.5px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-.row__meta{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;}
-.badge{
-  font-size:11px; padding:2px 7px; border-radius:999px; border:1px solid; font-family:var(--sans); font-weight:600;
-  display:inline-flex; align-items:center; gap:4px;
-}
-.badge.green{color:var(--green); background:var(--green-bg); border-color:var(--green-bd);}
-.badge.yellow{color:var(--yellow); background:var(--yellow-bg); border-color:var(--yellow-bd);}
-.badge.orange{color:var(--orange); background:var(--orange-bg); border-color:var(--orange-bd);}
-.badge.red{color:var(--red); background:var(--red-bg); border-color:var(--red-bd);}
-.row__submeta{font-size:11.5px; color:var(--text-faint); font-family:var(--mono);}
-.row__err{color:var(--red); font-size:12px; margin-top:4px;}
-.gps-icon{color:var(--text-dim);}
-
-/* ---------- Detail panel ---------- */
-.detail{padding:16px;}
-.detail__empty{color:var(--text-faint); font-size:13px; padding:40px 16px; text-align:center;}
-.detail__preview{
-  width:100%; aspect-ratio:4/3; background:var(--panel); border:1px solid var(--border); border-radius:5px;
-  overflow:hidden; display:flex; align-items:center; justify-content:center; margin-bottom:8px;
-}
-.detail__preview img{max-width:100%; max-height:100%; object-fit:contain;}
-.detail__thumb-compare{display:flex; gap:8px; align-items:center; margin-bottom:14px; font-size:11.5px; color:var(--text-dim);}
-.detail__thumb-compare img{width:56px; height:56px; object-fit:cover; border-radius:3px; border:1px solid var(--border);}
-.detail__title{font-family:var(--mono); font-size:13px; word-break:break-all; margin-bottom:2px;}
-.detail__badge-row{margin:8px 0 14px;}
-.detail__badge-text{font-size:12.5px; color:var(--text-dim); margin-top:6px; line-height:1.5;}
-.detail__badge-text ul{margin:4px 0 0; padding-left:18px;}
-
-.section{border-top:1px solid var(--border-soft); padding:10px 0;}
-.section > summary{
-  cursor:pointer; font-weight:600; font-size:12.5px; color:var(--text); list-style:none;
-  display:flex; align-items:center; gap:6px; user-select:none;
-}
-.section > summary::-webkit-details-marker{display:none;}
-.section > summary::before{content:"▸"; color:var(--text-faint); transition:transform .1s;}
-.section[open] > summary::before{transform:rotate(90deg);}
-.kv{width:100%; border-collapse:collapse; margin-top:8px;}
-.kv tr{border-bottom:1px solid var(--border-soft);}
-.kv td{padding:4px 4px; vertical-align:top; font-size:12px;}
-.kv td:first-child{color:var(--text-faint); white-space:nowrap; padding-right:10px; width:42%;}
-.kv td:last-child{font-family:var(--mono); color:var(--text); word-break:break-word;}
-.hash-value{font-size:11px; word-break:break-all;}
-.copy-btn{
-  background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); border-radius:3px;
-  padding:1px 6px; font-size:10.5px; cursor:pointer; margin-left:6px;
-}
-.copy-btn:hover{color:var(--text); border-color:var(--accent);}
-.btn-row{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;}
-.link-btn{
-  display:inline-block; background:var(--panel-2); border:1px solid var(--border); color:var(--text);
-  padding:5px 9px; border-radius:var(--radius); font-size:11.5px; text-decoration:none; cursor:pointer;
-}
-.link-btn:hover{border-color:var(--accent); color:var(--accent);}
-.no-data{color:var(--text-faint); font-size:12px; font-style:italic;}
-
-.detail__actions{display:flex; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border-soft);}
-.detail__actions .link-btn{flex:1; text-align:center;}
-
-/* ---------- Compare ---------- */
-.compare-panel{position:fixed; inset:0; background:rgba(10,11,13,.72); z-index:40; display:none; align-items:center; justify-content:center; padding:24px;}
-.compare-panel.open{display:flex;}
-.compare-box{background:var(--bg-alt); border:1px solid var(--border); border-radius:8px; max-width:1100px; width:100%; max-height:90vh; overflow:auto; padding:20px;}
-.compare-box h3{margin-top:0;}
-.compare-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
-.compare-col img{width:100%; max-height:280px; object-fit:contain; background:var(--panel); border:1px solid var(--border); border-radius:4px;}
-.compare-col table{width:100%; border-collapse:collapse; margin-top:10px;}
-.compare-col td{font-size:11.5px; padding:3px 4px; border-bottom:1px solid var(--border-soft); font-family:var(--mono);}
-.compare-col td:first-child{color:var(--text-faint); font-family:var(--sans); width:40%;}
-.compare-close{float:right; background:var(--panel-2); border:1px solid var(--border); color:var(--text); border-radius:var(--radius); padding:6px 12px; cursor:pointer;}
-
-/* ---------- Footer ---------- */
-.footer{
-  border-top:1px solid var(--border); background:var(--bg-alt); padding:9px 16px;
-  font-size:11.5px; color:var(--text-faint); text-align:center;
-}
-.footer strong{color:var(--text-dim);}
-
-/* ---------- Modal sheet for small screens ---------- */
-@media (max-width:900px){
-  .layout{flex-direction:column;}
-  .col-detail{
-    width:100%; position:fixed; inset:0; top:0; z-index:50; max-height:100vh;
-    transform:translateY(100%); transition:transform .18s ease; display:flex; flex-direction:column;
-  }
-  .col-detail.open{transform:translateY(0);}
-  .detail-mobile-bar{display:flex; justify-content:flex-end; padding:8px 12px; border-bottom:1px solid var(--border);}
-  .detail-mobile-bar button{background:var(--panel-2); border:1px solid var(--border); color:var(--text); border-radius:var(--radius); padding:6px 12px; cursor:pointer;}
-}
-@media (min-width:901px){
-  .detail-mobile-bar{display:none;}
-}
-@media (max-width:900px){
-  .compare-grid{grid-template-columns:1fr;}
-  .row__thumb{width:52px; height:52px;}
-}
-@media (max-width:360px){
-  .topbar__whatsapp-note{display:none;}
-  .row__name{font-size:11px;}
-}
-
-@media print{
-  .topbar, .toolbar, .dropzone, .progress-wrap, .col-detail, .footer, .compare-panel{display:none !important;}
-}
+.error-msg{color:var(--red); font-size:12.5px; margin-top:8px;}
 </style>
 </head>
 <body>
 <div class="app">
-
   <header class="topbar">
-    <div class="topbar__brand">ANALIZADOR FORENSE DE METADATOS <span class="dim">// PXEC</span></div>
-    <div class="topbar__badge">100% local · sin subida a servidor</div>
+    <div class="topbar__brand">VALIDADOR DE FOTOS <span class="dim">// PXEC</span></div>
     <div class="topbar__spacer"></div>
-    <div class="topbar__whatsapp-note">⚠ Para conservar EXIF, la foto debe enviarse por WhatsApp como <strong>documento</strong>, no como imagen.</div>
+    <div class="topbar__badge" id="stepBadge">paso 1 / 4</div>
   </header>
 
-  <div class="layout">
-    <main class="col-main">
+  <div class="wrap">
 
-      <div class="dropzone" id="dropzone">
-        <h2>Arrastrá imágenes acá, o elegilas manualmente</h2>
-        <p>Se procesan 20–50 imágenes por lote sin bloquear la interfaz. Nada sale de este navegador.</p>
-        <button class="dropzone__btn" id="pickFilesBtn" type="button">Elegir archivos</button>
-        <input type="file" id="fileInput" multiple accept="image/*,.heic,.heif,.avif">
+    <!-- 1. Inicio -->
+    <section class="screen active" id="screenInicio">
+      <h1>Fotos del vehículo</h1>
+      <p>Vamos a tomar hasta <strong id="maxFotosLabel">20</strong> fotos del vehículo directamente desde la cámara de este dispositivo. También vamos a registrar tu ubicación actual. Ninguno de los dos datos se puede cargar a mano: se toman en el momento, desde el navegador.</p>
+      <div class="field">
+        <label for="patenteInput">Patente del vehículo (opcional, ayuda a identificar el lote)</label>
+        <input type="text" id="patenteInput" placeholder="AA123BB" autocomplete="off">
       </div>
+      <div class="actions">
+        <button class="btn primary" id="btnComenzar" type="button">Comenzar</button>
+      </div>
+    </section>
 
-      <div class="progress-wrap" id="progressWrap">
-        <div class="progress-bar"><div class="progress-bar__fill" id="progressFill"></div></div>
-        <div class="progress-label" id="progressLabel">0 / 0</div>
+    <!-- 2. Ubicación -->
+    <section class="screen" id="screenUbicacion">
+      <h1>Confirmá tu ubicación</h1>
+      <p>Necesitamos tu ubicación actual para asociarla a las fotos. Se toma directamente del GPS del dispositivo: no se puede escribir a mano.</p>
+      <div id="ubicEstado"></div>
+      <div class="actions">
+        <button class="btn" id="btnReintentarUbic" type="button">Reintentar ubicación</button>
+        <button class="btn primary" id="btnConfirmarUbic" type="button" disabled>Confirmar y continuar</button>
       </div>
+    </section>
 
-      <div class="toolbar">
-        <input type="search" id="searchInput" placeholder="Buscar por nombre…" aria-label="Buscar por nombre">
-        <button class="chip" data-filter="gps" aria-pressed="false" type="button">📍 Con GPS</button>
-        <button class="chip" data-filter="noexif" aria-pressed="false" type="button">Sin EXIF</button>
-        <button class="chip" data-filter="edited" aria-pressed="false" type="button">Editadas</button>
-        <button class="chip" data-filter="inconsistent" aria-pressed="false" type="button">Inconsistencias</button>
-        <select id="sortSelect" aria-label="Ordenar por">
-          <option value="name">Ordenar: nombre</option>
-          <option value="date">Ordenar: fecha</option>
-          <option value="size">Ordenar: peso</option>
-        </select>
-        <button class="chip" id="compareBtn" type="button" disabled>⇄ Comparar (0/2)</button>
-        <div class="export-menu">
-          <button class="export-btn" id="exportBtn" type="button">Exportar ▾</button>
-          <div class="export-dropdown" id="exportDropdown">
-            <button data-export="csv" type="button">CSV (Excel, ; + BOM)</button>
-            <button data-export="json" type="button">JSON completo</button>
-            <button data-export="html" type="button">Informe HTML autocontenido</button>
-            <p class="hint">El informe HTML incluye hash SHA-256, miniaturas y aviso legal para adjuntar a un peritaje.</p>
-          </div>
-        </div>
-        <span class="toolbar__count" id="resultCount"></span>
+    <!-- 3. Cámara -->
+    <section class="screen" id="screenCamara">
+      <h1>Tomá las fotos del vehículo</h1>
+      <p>Sacá fotos desde distintos ángulos (frente, contrafrente, laterales, patente, daños si los hay). Podés borrar y repetir una foto puntual antes de subir el lote.</p>
+      <div class="camera-box">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="camera-counter" id="fotoCounter">0 / 20</div>
       </div>
+      <div id="camaraError" class="error-msg"></div>
+      <div class="shutter-row">
+        <button class="shutter-btn" id="btnDisparar" type="button" aria-label="Tomar foto"></button>
+      </div>
+      <div class="thumb-strip" id="thumbStrip"></div>
+      <div class="actions">
+        <button class="btn primary" id="btnFinalizar" type="button" disabled>Finalizar y subir</button>
+      </div>
+    </section>
 
-      <div class="list" id="list" tabindex="-1">
-        <div class="empty-state" id="emptyState">
-          <h2>Qué hace esta herramienta</h2>
-          <p>Extrae metadatos técnicos de fotos (EXIF, GPS, software de edición, hash de integridad) para ayudar a evaluar de dónde puede venir una imagen y si muestra señales de edición.</p>
-          <p>Todo el análisis ocurre en tu navegador. No se sube ninguna imagen a ningún servidor.</p>
-          <div class="warn">
-            <strong>Importante:</strong> WhatsApp, Instagram, Facebook y Telegram eliminan los metadatos EXIF al comprimir la imagen. Si tus fotos llegaron como imagen normal, es esperable que aparezcan sin EXIF — eso NO es evidencia de manipulación. Para preservarlo, pedí que te la envíen como <strong>documento/archivo</strong>.
-          </div>
-        </div>
-      </div>
-    </main>
+    <!-- 4. Subiendo -->
+    <section class="screen" id="screenSubiendo">
+      <h1>Subiendo fotos…</h1>
+      <p>No cierres esta ventana hasta que termine.</p>
+      <div class="progress-bar"><div class="progress-bar__fill" id="subProgressFill"></div></div>
+      <div class="progress-label" id="subProgressLabel">0 / 0</div>
+      <div class="upload-log" id="subLog"></div>
+    </section>
 
-    <aside class="col-detail" id="detailPanel">
-      <div class="detail-mobile-bar"><button id="closeDetailBtn" type="button">Cerrar ✕</button></div>
-      <div class="detail" id="detailContent">
-        <div class="detail__empty">Seleccioná una imagen de la lista para ver su detalle.</div>
+    <!-- 5. Ticket -->
+    <section class="screen" id="screenTicket">
+      <h1>¡Listo! Guardá este código</h1>
+      <p>Mandá una captura de pantalla de esta página por WhatsApp para que podamos revisar tus fotos.</p>
+      <div class="ticket-box">
+        <div class="ticket-label">Código de ticket</div>
+        <div class="ticket-code" id="ticketCode">------</div>
       </div>
-    </aside>
+      <div class="actions">
+        <a class="btn primary" id="btnWhatsapp" href="#" target="_blank" rel="noopener noreferrer" style="text-align:center; text-decoration:none;">Enviar por WhatsApp</a>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnNuevoLote" type="button">Cargar otro vehículo</button>
+      </div>
+    </section>
+
   </div>
 
   <footer class="footer">
-    El análisis de metadatos es indiciario: no reemplaza un peritaje forense y los metadatos pueden falsificarse con herramientas comunes.
+    Tus fotos y ubicación se registran en el momento de la captura y no pueden editarse. <a href="admin.html" class="topbar__link" style="margin-left:8px;">Panel admin</a>
   </footer>
 </div>
 
-<div class="compare-panel" id="comparePanel">
-  <div class="compare-box">
-    <button class="compare-close" id="compareCloseBtn" type="button">Cerrar ✕</button>
-    <h3>Comparación lado a lado</h3>
-    <div class="compare-grid" id="compareGrid"></div>
-  </div>
-</div>
+<script type="module">
+import { auth, db, WHATSAPP_NUMERO, MAX_FOTOS, MAX_FOTO_BYTES } from './firebase-config.js';
+import { signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { collection, doc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
-<script>
-'use strict';
-/* ======================================================================
-   CORE: sniffing, filename heuristics, TIFF/EXIF, XMP, DQT, authenticity
-   (Validated separately against a synthetic EXIF/GPS/thumbnail JPEG.)
-   ====================================================================== */
-
-function sniffFormat(bytes) {
-  const b = bytes;
-  const len = b.length;
-  const eq = (offset, arr) => {
-    if (offset + arr.length > len) return false;
-    for (let i = 0; i < arr.length; i++) if (b[offset + i] !== arr[i]) return false;
-    return true;
-  };
-  const ascii = (offset, count) => {
-    let s = '';
-    for (let i = 0; i < count && offset + i < len; i++) s += String.fromCharCode(b[offset + i]);
-    return s;
-  };
-  if (eq(0, [0xFF, 0xD8, 0xFF])) return { format: 'JPEG', mime: 'image/jpeg' };
-  if (eq(0, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) return { format: 'PNG', mime: 'image/png' };
-  if (eq(0, [0x47, 0x49, 0x46, 0x38])) return { format: 'GIF', mime: 'image/gif' };
-  if (eq(0, [0x52, 0x49, 0x46, 0x46]) && eq(8, [0x57, 0x45, 0x42, 0x50])) return { format: 'WebP', mime: 'image/webp' };
-  if (eq(4, [0x66, 0x74, 0x79, 0x70])) {
-    const brand = ascii(8, 4);
-    if (['heic', 'heix', 'hevc', 'hevx'].includes(brand)) return { format: 'HEIC', mime: 'image/heic' };
-    if (['mif1', 'msf1'].includes(brand)) return { format: 'HEIF', mime: 'image/heif' };
-    if (['avif', 'avis'].includes(brand)) return { format: 'AVIF', mime: 'image/avif' };
-    return { format: 'ISOBMFF (' + brand + ')', mime: 'application/octet-stream' };
-  }
-  if (eq(0, [0x49, 0x49, 0x2A, 0x00]) || eq(0, [0x4D, 0x4D, 0x00, 0x2A])) return { format: 'TIFF', mime: 'image/tiff' };
-  if (eq(0, [0x42, 0x4D])) return { format: 'BMP', mime: 'image/bmp' };
-  return { format: 'Desconocido', mime: 'application/octet-stream' };
-}
-
-const EXT_MIME_MAP = {
-  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
-  webp: 'image/webp', heic: 'image/heic', heif: 'image/heif', avif: 'image/avif',
-  tif: 'image/tiff', tiff: 'image/tiff', bmp: 'image/bmp'
-};
-
-function extensionMismatch(fileName, detectedMime) {
-  const m = /\.([a-z0-9]+)$/i.exec(fileName || '');
-  if (!m) return { hasExtension: false, mismatch: false, extension: null };
-  const ext = m[1].toLowerCase();
-  const expected = EXT_MIME_MAP[ext];
-  if (!expected) return { hasExtension: true, mismatch: false, extension: ext };
-  const mismatch = expected !== detectedMime;
-  return { hasExtension: true, mismatch, extension: ext, expectedMime: expected };
-}
-
-function safeDate(y, mo, d, h, mi, s) {
-  h = h || 0; mi = mi || 0; s = s || 0;
-  if (!y || !mo || !d) return null;
-  const dt = new Date(y, mo - 1, d, h, mi, s);
-  if (isNaN(dt.getTime())) return null;
-  return dt;
-}
-
-function parseFilenameHeuristics(name) {
-  if (!name) return null;
-  const base = name.replace(/\.[^.]+$/, '');
-  let m;
-
-  if ((m = /^IMG-(\d{4})(\d{2})(\d{2})-WA(\d+)/i.exec(base))) {
-    return { source: 'WhatsApp (Android)', dateKind: 'recepción', date: safeDate(+m[1], +m[2], +m[3]), note: 'Fecha de recepción por WhatsApp, no de captura.' };
-  }
-  if ((m = /^WhatsApp (Image|Video) (\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})/i.exec(base))) {
-    return { source: 'WhatsApp (Web/iOS)', dateKind: 'recepción', date: safeDate(+m[2], +m[3], +m[4], +m[5], +m[6], +m[7]), note: 'Fecha y hora de recepción por WhatsApp, no de captura.' };
-  }
-  if ((m = /^PXL_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/i.exec(base))) {
-    return { source: 'Google Pixel (cámara)', dateKind: 'captura', date: safeDate(+m[1], +m[2], +m[3], +m[4], +m[5], +m[6]), note: 'Fecha/hora de captura codificada en el nombre de archivo.' };
-  }
-  if ((m = /^Screenshot_(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/i.exec(base))) {
-    return { source: 'Captura de pantalla', dateKind: 'captura de pantalla', date: safeDate(+m[1], +m[2], +m[3], +m[4], +m[5], +m[6]), note: 'No es una foto tomada con cámara: es una captura de pantalla.', isScreenshot: true };
-  }
-  if ((m = /^Captura de pantalla[\s_-].*?(\d{4})-?(\d{2})-?(\d{2})/i.exec(base))) {
-    return { source: 'Captura de pantalla', dateKind: 'captura de pantalla', date: safeDate(+m[1], +m[2], +m[3]), note: 'No es una foto tomada con cámara: es una captura de pantalla.', isScreenshot: true };
-  }
-  if ((m = /^IMG_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/i.exec(base))) {
-    return { source: 'Android (cámara genérica)', dateKind: 'captura', date: safeDate(+m[1], +m[2], +m[3], +m[4], +m[5], +m[6]), note: 'Fecha/hora de captura codificada en el nombre de archivo.' };
-  }
-  if ((m = /^image_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})/i.exec(base))) {
-    return { source: 'Telegram', dateKind: 'recepción', date: safeDate(+m[1], +m[2], +m[3], +m[4], +m[5], +m[6]), note: 'Fecha de recepción/descarga por Telegram, no de captura.' };
-  }
-  if ((m = /^FB_IMG_(\d{10,13})/i.exec(base))) {
-    let epoch = parseInt(m[1], 10);
-    if (m[1].length === 10) epoch *= 1000;
-    return { source: 'Facebook (descargada)', dateKind: 'descarga', date: new Date(epoch), note: 'Marca de tiempo epoch de descarga desde Facebook, no de captura.' };
-  }
-  if ((m = /^IMG_(\d{4,5})$/i.exec(base))) {
-    return { source: 'iPhone (nombre secuencial)', dateKind: 'ninguna', date: null, note: 'Nombre secuencial de iPhone; no aporta fecha por sí solo.' };
-  }
-  return null;
-}
-
-const TYPE_SIZES = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8 };
-
-const IFD0_TAGS = {
-  0x010F: 'Make', 0x0110: 'Model', 0x0112: 'Orientation',
-  0x011A: 'XResolution', 0x011B: 'YResolution', 0x0128: 'ResolutionUnit',
-  0x0131: 'Software', 0x0132: 'ModifyDate', 0x013B: 'Artist', 0x8298: 'Copyright',
-  0x8769: '_ExifIFDPointer', 0x8825: '_GPSIFDPointer'
-};
-const EXIF_TAGS = {
-  0x829A: 'ExposureTime', 0x829D: 'FNumber', 0x8827: 'ISO',
-  0x9003: 'DateTimeOriginal', 0x9004: 'CreateDate',
-  0x9010: 'OffsetTime', 0x9011: 'OffsetTimeOriginal', 0x9012: 'OffsetTimeDigitized',
-  0x9201: 'ShutterSpeedValue', 0x9202: 'ApertureValue', 0x9204: 'ExposureBias',
-  0x9207: 'MeteringMode', 0x9209: 'Flash', 0x920A: 'FocalLength',
-  0xA001: 'ColorSpace', 0xA002: 'PixelXDimension', 0xA003: 'PixelYDimension',
-  0xA402: 'ExposureMode', 0xA403: 'WhiteBalance', 0xA405: 'FocalLengthIn35mm',
-  0xA430: 'OwnerName', 0xA431: 'BodySerialNumber', 0xA433: 'LensMake', 0xA434: 'LensModel'
-};
-const GPS_TAGS = {
-  0x0001: 'GPSLatitudeRef', 0x0002: 'GPSLatitude', 0x0003: 'GPSLongitudeRef', 0x0004: 'GPSLongitude',
-  0x0005: 'GPSAltitudeRef', 0x0006: 'GPSAltitude', 0x0007: 'GPSTimeStamp', 0x001D: 'GPSDateStamp',
-  0x0010: 'GPSImgDirectionRef', 0x0011: 'GPSImgDirection', 0x0012: 'GPSMapDatum'
-};
-const IFD1_TAGS = { 0x0103: 'ThumbnailCompression', 0x0201: 'ThumbnailOffset', 0x0202: 'ThumbnailLength' };
-
-function readTagValue(view, entryOffset, tiffStart, little, buffer) {
-  const type = view.getUint16(entryOffset + 2, little);
-  const count = view.getUint32(entryOffset + 4, little);
-  const size = (TYPE_SIZES[type] || 1) * count;
-  let dataOffset;
-  if (size <= 4) dataOffset = entryOffset + 8;
-  else dataOffset = tiffStart + view.getUint32(entryOffset + 8, little);
-  if (dataOffset < 0 || dataOffset + size > buffer.byteLength) return null;
-
-  const readOne = (offset) => {
-    switch (type) {
-      case 1: case 7: return view.getUint8(offset);
-      case 3: return view.getUint16(offset, little);
-      case 4: return view.getUint32(offset, little);
-      case 9: return view.getInt32(offset, little);
-      case 5: { const num = view.getUint32(offset, little), den = view.getUint32(offset + 4, little); return den === 0 ? 0 : num / den; }
-      case 10: { const num = view.getInt32(offset, little), den = view.getInt32(offset + 4, little); return den === 0 ? 0 : num / den; }
-      default: return view.getUint8(offset);
-    }
-  };
-  if (type === 2) {
-    let s = '';
-    for (let i = 0; i < count; i++) { const c = view.getUint8(dataOffset + i); if (c === 0) break; s += String.fromCharCode(c); }
-    return s;
-  }
-  const tsize = TYPE_SIZES[type] || 1;
-  if (count === 1) return readOne(dataOffset);
-  const arr = [];
-  for (let i = 0; i < count; i++) arr.push(readOne(dataOffset + i * tsize));
-  return arr;
-}
-
-function readIFD(view, buffer, offset, tiffStart, little, tagMap) {
-  if (offset <= 0 || offset + 2 > buffer.byteLength) return { tags: {}, next: 0 };
-  const entryCount = view.getUint16(offset, little);
-  const tags = {};
-  let p = offset + 2;
-  for (let i = 0; i < entryCount; i++) {
-    if (p + 12 > buffer.byteLength) break;
-    const tagId = view.getUint16(p, little);
-    const name = tagMap[tagId];
-    if (name) { try { tags[name] = readTagValue(view, p, tiffStart, little, buffer); } catch (e) {} }
-    p += 12;
-  }
-  const nextOffset = p + 4 <= buffer.byteLength ? view.getUint32(p, little) : 0;
-  return { tags, next: nextOffset };
-}
-
-function dmsToDecimal(dms, ref) {
-  if (!Array.isArray(dms) || dms.length < 3) return null;
-  const [deg, min, sec] = dms;
-  let dec = deg + min / 60 + sec / 3600;
-  if (ref === 'S' || ref === 'W') dec = -dec;
-  return dec;
-}
-function decimalToDMS(dec) {
-  const abs = Math.abs(dec);
-  const deg = Math.floor(abs);
-  const minFloat = (abs - deg) * 60;
-  const min = Math.floor(minFloat);
-  const sec = (minFloat - min) * 60;
-  return { deg, min, sec };
-}
-function formatDMS(dec, isLat) {
-  if (dec == null) return '';
-  const { deg, min, sec } = decimalToDMS(dec);
-  const ref = isLat ? (dec >= 0 ? 'N' : 'S') : (dec >= 0 ? 'E' : 'W');
-  return `${deg}°${min}'${sec.toFixed(2)}"${ref}`;
-}
-
-function parseTIFF(buffer, tiffStart) {
-  const view = new DataView(buffer);
-  if (tiffStart + 8 > buffer.byteLength) return null;
-  const b0 = view.getUint8(tiffStart), b1 = view.getUint8(tiffStart + 1);
-  let little;
-  if (b0 === 0x49 && b1 === 0x49) little = true;
-  else if (b0 === 0x4D && b1 === 0x4D) little = false;
-  else return null;
-  const magic = view.getUint16(tiffStart + 2, little);
-  if (magic !== 0x002A) return null;
-  const ifd0Offset = view.getUint32(tiffStart + 4, little);
-
-  const ifd0 = readIFD(view, buffer, tiffStart + ifd0Offset, tiffStart, little, IFD0_TAGS);
-  const result = { ifd0: Object.assign({}, ifd0.tags), exif: {}, gps: {}, thumbnail: null };
-
-  if (ifd0.tags._ExifIFDPointer) {
-    const exifIFD = readIFD(view, buffer, tiffStart + ifd0.tags._ExifIFDPointer, tiffStart, little, EXIF_TAGS);
-    result.exif = exifIFD.tags;
-  }
-  if (ifd0.tags._GPSIFDPointer) {
-    const gpsIFD = readIFD(view, buffer, tiffStart + ifd0.tags._GPSIFDPointer, tiffStart, little, GPS_TAGS);
-    result.gps = gpsIFD.tags;
-  }
-  delete result.ifd0._ExifIFDPointer;
-  delete result.ifd0._GPSIFDPointer;
-
-  if (ifd0.next) {
-    const ifd1 = readIFD(view, buffer, tiffStart + ifd0.next, tiffStart, little, IFD1_TAGS);
-    if (ifd1.tags.ThumbnailOffset != null && ifd1.tags.ThumbnailLength != null) {
-      const start = tiffStart + ifd1.tags.ThumbnailOffset;
-      const len = ifd1.tags.ThumbnailLength;
-      if (start >= 0 && start + len <= buffer.byteLength) result.thumbnail = new Uint8Array(buffer, start, len);
-    }
-  }
-  if (result.gps.GPSLatitude && result.gps.GPSLongitude) {
-    result.gps.latitudeDecimal = dmsToDecimal(result.gps.GPSLatitude, result.gps.GPSLatitudeRef);
-    result.gps.longitudeDecimal = dmsToDecimal(result.gps.GPSLongitude, result.gps.GPSLongitudeRef);
-  }
-  return result;
-}
-
-function bytesToAscii(bytes, start, len) {
-  let s = '';
-  for (let i = 0; i < len; i++) s += String.fromCharCode(bytes[start + i]);
-  return s;
-}
-
-function parseJPEGSegments(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const view = new DataView(buffer);
-  const out = { exif: null, xmp: null, hasIRB: false, hasJUMBF: false, quantTables: [] };
-  if (bytes[0] !== 0xFF || bytes[1] !== 0xD8) return out;
-  let offset = 2;
-  while (offset + 4 <= bytes.length) {
-    if (bytes[offset] !== 0xFF) { offset++; continue; }
-    const marker = bytes[offset + 1];
-    if (marker === 0xD8 || marker === 0x01 || (marker >= 0xD0 && marker <= 0xD9)) { offset += 2; continue; }
-    if (marker === 0xDA) break;
-    if (offset + 4 > bytes.length) break;
-    const segLength = view.getUint16(offset + 2, false);
-    const segStart = offset + 4;
-    const segEnd = offset + 2 + segLength;
-    if (segEnd > bytes.length) break;
-
-    if (marker === 0xE1) {
-      const sig = bytesToAscii(bytes, segStart, Math.min(6, segEnd - segStart));
-      if (sig.startsWith('Exif\0')) {
-        try { out.exif = parseTIFF(buffer, segStart + 6); } catch (e) {}
-      } else {
-        const xmpSig = 'http://ns.adobe.com/xap/1.0/\0';
-        const candidate = bytesToAscii(bytes, segStart, Math.min(xmpSig.length, segEnd - segStart));
-        if (candidate === xmpSig) {
-          try { out.xmp = new TextDecoder('utf-8').decode(bytes.subarray(segStart + xmpSig.length, segEnd)); } catch (e) {}
-        }
-      }
-    } else if (marker === 0xED) {
-      const sig = bytesToAscii(bytes, segStart, Math.min(14, segEnd - segStart));
-      if (sig.startsWith('Photoshop 3.0')) out.hasIRB = true;
-    } else if (marker === 0xEB) {
-      out.hasJUMBF = true;
-    } else if (marker === 0xDB) {
-      let p = segStart;
-      while (p < segEnd) {
-        const pq = (bytes[p] & 0xF0) >> 4;
-        const tq = bytes[p] & 0x0F;
-        p += 1;
-        const table = new Array(64);
-        for (let i = 0; i < 64; i++) table[i] = pq === 0 ? bytes[p + i] : view.getUint16(p + i * 2, false);
-        p += pq === 0 ? 64 : 128;
-        out.quantTables.push({ id: tq, precision: pq, table });
-      }
-    }
-    offset = segEnd;
-  }
-  return out;
-}
-
-const STD_LUMA_QTABLE = [16,11,10,16,24,40,51,61,12,12,14,19,26,58,60,55,14,13,16,24,40,57,69,56,14,17,22,29,51,87,80,62,18,22,37,56,68,109,103,77,24,35,55,64,81,104,113,92,49,64,78,87,103,121,120,101,72,92,95,98,112,100,103,99];
-
-function estimateJpegQuality(quantTables) {
-  if (!quantTables || quantTables.length === 0) return null;
-  const luma = quantTables.find(t => t.id === 0) || quantTables[0];
-  if (!luma) return null;
-  const table = luma.table;
-  let sum = 0;
-  for (let i = 0; i < 64; i++) sum += table[i] / STD_LUMA_QTABLE[i];
-  const avgRatio = sum / 64;
-  let quality = avgRatio <= 1 ? Math.round((2 - avgRatio) * 50) : Math.round(5000 / (avgRatio * 100));
-  return Math.max(1, Math.min(100, quality));
-}
-
-function parsePNGChunks(buffer) {
-  const view = new DataView(buffer);
-  const bytes = new Uint8Array(buffer);
-  const out = { exif: null, text: {}, hasStableDiffusionParams: false };
-  let offset = 8;
-  while (offset + 8 <= bytes.length) {
-    const length = view.getUint32(offset, false);
-    const type = bytesToAscii(bytes, offset + 4, 4);
-    const dataStart = offset + 8;
-    const dataEnd = dataStart + length;
-    if (dataEnd > bytes.length) break;
-    if (type === 'eXIf') {
-      try { out.exif = parseTIFF(buffer, dataStart); } catch (e) {}
-    } else if (type === 'tEXt') {
-      const chunk = bytes.subarray(dataStart, dataEnd);
-      const nullIdx = chunk.indexOf(0);
-      if (nullIdx > -1) {
-        const key = bytesToAscii(chunk, 0, nullIdx);
-        const val = new TextDecoder('latin1').decode(chunk.subarray(nullIdx + 1));
-        out.text[key] = val;
-        if (key.toLowerCase() === 'parameters') out.hasStableDiffusionParams = true;
-      }
-    } else if (type === 'iTXt') {
-      const chunk = bytes.subarray(dataStart, dataEnd);
-      const nullIdx = chunk.indexOf(0);
-      if (nullIdx > -1) {
-        const key = bytesToAscii(chunk, 0, nullIdx);
-        try { out.text[key] = new TextDecoder('utf-8').decode(chunk.subarray(nullIdx + 1)); } catch (e) {}
-      }
-    }
-    offset = dataEnd + 4;
-    if (type === 'IEND') break;
-  }
-  return out;
-}
-
-function parseWebPChunks(buffer) {
-  const view = new DataView(buffer);
-  const bytes = new Uint8Array(buffer);
-  const out = { exif: null, xmp: null };
-  let offset = 12;
-  while (offset + 8 <= bytes.length) {
-    const fourcc = bytesToAscii(bytes, offset, 4);
-    const size = view.getUint32(offset + 4, true);
-    const dataStart = offset + 8;
-    const dataEnd = dataStart + size;
-    if (dataEnd > bytes.length) break;
-    if (fourcc === 'EXIF') {
-      let tiffStart = dataStart;
-      const sig = bytesToAscii(bytes, dataStart, Math.min(6, size));
-      if (sig.startsWith('Exif\0')) tiffStart = dataStart + 6;
-      try { out.exif = parseTIFF(buffer, tiffStart); } catch (e) {}
-    } else if (fourcc === 'XMP ') {
-      try { out.xmp = new TextDecoder('utf-8').decode(bytes.subarray(dataStart, dataEnd)); } catch (e) {}
-    }
-    offset = dataEnd + (size % 2);
-  }
-  return out;
-}
-
-function extractXMPFields(xmpText) {
-  if (!xmpText) return null;
-  const result = {};
-  const grab = (regex) => { const m = regex.exec(xmpText); return m ? m[1].trim() : null; };
-  result.CreatorTool = grab(/xmp:CreatorTool="([^"]*)"/) || grab(/<xmp:CreatorTool>([^<]*)<\/xmp:CreatorTool>/);
-  result.DocumentID = grab(/xmpMM:DocumentID="([^"]*)"/) || grab(/<xmpMM:DocumentID>([^<]*)<\/xmpMM:DocumentID>/);
-  result.HistorySoftwareAgent = grab(/stEvt:softwareAgent="([^"]*)"/);
-  result.DigitalSourceType = grab(/digitalSourceType="([^"]*)"/) || grab(/<[^>]*digitalSourceType>([^<]*)</);
-  result.hasHistory = /<xmpMM:History/.test(xmpText) || /photoshop:History/.test(xmpText);
-  const hasAny = Object.keys(result).some(k => result[k]);
-  return hasAny ? result : null;
-}
-
-const AI_SOFTWARE_PATTERNS = [/midjourney/i, /dall[\s-]?e/i, /stable diffusion/i, /firefly/i, /automatic1111/i, /comfyui/i, /leonardo\.ai/i];
-
-function detectAIMarkers({ software, xmpFields, pngText }) {
-  const hits = [];
-  if (software && AI_SOFTWARE_PATTERNS.some(re => re.test(software))) hits.push('Software EXIF indica herramienta de generación por IA: ' + software);
-  if (xmpFields) {
-    if (xmpFields.CreatorTool && AI_SOFTWARE_PATTERNS.some(re => re.test(xmpFields.CreatorTool))) hits.push('XMP CreatorTool indica IA generativa: ' + xmpFields.CreatorTool);
-    if (xmpFields.DigitalSourceType && /trainedAlgorithmicMedia/i.test(xmpFields.DigitalSourceType)) hits.push('XMP digitalSourceType = trainedAlgorithmicMedia (contenido generado por IA)');
-  }
-  if (pngText && pngText.hasStableDiffusionParams) hits.push('Chunk PNG "parameters" presente (típico de Stable Diffusion / Automatic1111)');
-  return hits;
-}
-
-function parseExifDateString(s) {
-  const m = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(s || '');
-  if (!m) return null;
-  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-}
-
-function evaluateAuthenticity(record) {
-  const findings = [];
-  let level = 'yellow';
-  const hasExif = record.exif && (Object.keys(record.exif.ifd0 || {}).length > 0 || Object.keys(record.exif.exif || {}).length > 0);
-  const make = record.exif && record.exif.ifd0 && record.exif.ifd0.Make;
-  const model = record.exif && record.exif.ifd0 && record.exif.ifd0.Model;
-  const software = record.exif && record.exif.ifd0 && record.exif.ifd0.Software;
-  const dto = record.exif && record.exif.exif && record.exif.exif.DateTimeOriginal;
-  const modDate = record.exif && record.exif.ifd0 && record.exif.ifd0.ModifyDate;
-
-  const redFlags = [];
-  if (record.extMismatch && record.extMismatch.mismatch) {
-    redFlags.push(`La extensión .${record.extMismatch.extension} no coincide con el contenido real (${record.detectedFormat}).`);
-  }
-  if (dto && modDate) {
-    const d1 = parseExifDateString(dto), d2 = parseExifDateString(modDate);
-    if (d1 && d2 && d2 < d1) redFlags.push('ModifyDate es anterior a DateTimeOriginal (inconsistencia temporal).');
-  }
-  if (record.thumbnailMismatch) redFlags.push('La miniatura EXIF embebida no coincide en dimensiones/proporción con la imagen principal.');
-
-  const editSignals = [];
-  if (software && !AI_SOFTWARE_PATTERNS.some(re => re.test(software)) && /photoshop|gimp|lightroom|paint\.net|affinity|snapseed|picsart|canva/i.test(software)) {
-    editSignals.push('Software de edición: ' + software);
-  }
-  if (record.hasIRB) editSignals.push('Bloque Photoshop IRB (APP13) presente.');
-  if (record.xmpFields && record.xmpFields.hasHistory) editSignals.push('Historial de edición XMP presente.');
-  if (record.aiMarkers && record.aiMarkers.length) editSignals.push(...record.aiMarkers);
-
-  if (redFlags.length > 0) {
-    level = 'red'; findings.push(...redFlags);
-  } else if (editSignals.length > 0) {
-    level = 'orange'; findings.push(...editSignals);
-    findings.push('Editar puede significar solo un recorte o ajuste de brillo; no implica manipulación fraudulenta por sí solo.');
-  } else if (hasExif && (make || model || dto)) {
-    level = 'green'; findings.push('EXIF presente con datos de cámara y/o fecha de captura, sin señales de edición conocidas.');
-  } else {
-    level = 'yellow';
-    findings.push('WhatsApp, Instagram, Facebook y Telegram eliminan los metadatos EXIF al comprimir la imagen. La ausencia de EXIF es lo normal en una foto reenviada y NO es evidencia de manipulación.');
-  }
-  return { level, findings };
-}
-
-/* ======================================================================
-   File-level helpers
-   ====================================================================== */
-
-function formatBytes(n) {
-  if (n < 1024) return n + ' B';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-  return (n / (1024 * 1024)).toFixed(2) + ' MB';
-}
-
-async function sha256Hex(buffer) {
-  const digest = await crypto.subtle.digest('SHA-256', buffer);
-  const bytes = new Uint8Array(digest);
-  let hex = '';
-  for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
-  return hex;
-}
-
-function getImageDimensions(url) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = () => resolve({ width: null, height: null });
-    img.src = url;
-  });
-}
-
-function gcd(a, b) { return b === 0 ? a : gcd(b, a % b); }
-function aspectRatio(w, h) {
-  if (!w || !h) return '';
-  const d = gcd(w, h);
-  return `${w / d}:${h / d}`;
-}
-
-const LABELS = {
-  Make: 'Marca', Model: 'Modelo', Orientation: 'Orientación', Software: 'Software',
-  ModifyDate: 'Fecha de modificación', Artist: 'Autor', Copyright: 'Copyright',
-  ExposureTime: 'Tiempo de exposición', FNumber: 'Apertura (f/)', ISO: 'ISO',
-  DateTimeOriginal: 'Fecha/hora de captura', CreateDate: 'Fecha de creación',
-  OffsetTime: 'Zona horaria', ShutterSpeedValue: 'Velocidad de obturación',
-  ApertureValue: 'Valor de apertura', ExposureBias: 'Compensación de exposición',
-  MeteringMode: 'Modo de medición', Flash: 'Flash', FocalLength: 'Distancia focal (mm)',
-  ColorSpace: 'Espacio de color', PixelXDimension: 'Ancho (px, EXIF)', PixelYDimension: 'Alto (px, EXIF)',
-  ExposureMode: 'Modo de exposición', WhiteBalance: 'Balance de blancos',
-  FocalLengthIn35mm: 'Distancia focal equiv. 35mm', OwnerName: 'Propietario',
-  BodySerialNumber: 'Número de serie', LensMake: 'Marca del lente', LensModel: 'Modelo del lente'
-};
-
-function fmtVal(v) {
-  if (v == null) return '';
-  if (Array.isArray(v)) return v.join(', ');
-  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
-  return String(v);
-}
-
-/* ======================================================================
-   Application state & orchestration
-   ====================================================================== */
+document.getElementById('maxFotosLabel').textContent = String(MAX_FOTOS);
+document.getElementById('fotoCounter').textContent = `0 / ${MAX_FOTOS}`;
 
 const state = {
-  items: [],          // { id, file, status, ...analysis }
-  selectedId: null,
-  filters: { gps: false, noexif: false, edited: false, inconsistent: false },
-  search: '',
-  sort: 'name',
-  compareSet: []
+  patente: '',
+  ubicacion: null,   // { lat, lng, accuracy, capturedAt }
+  fotos: [],          // [{ dataUrl, bytes, capturedAt }]
+  stream: null,
+  loteId: null,
+  ticketCode: null
 };
 
-let nextId = 1;
+const screens = ['screenInicio', 'screenUbicacion', 'screenCamara', 'screenSubiendo', 'screenTicket'];
+const stepBadge = document.getElementById('stepBadge');
+const stepLabels = { screenInicio: 'paso 1 / 4', screenUbicacion: 'paso 2 / 4', screenCamara: 'paso 3 / 4', screenSubiendo: 'subiendo…', screenTicket: 'listo' };
 
-function updateWhatsAppNoteVisibility() {
-  // static note always visible per spec; nothing to toggle
+function showScreen(id) {
+  for (const s of screens) document.getElementById(s).classList.toggle('active', s === id);
+  stepBadge.textContent = stepLabels[id] || '';
 }
 
-async function analyzeFile(file) {
-  const record = {
-    id: nextId++,
-    file,
-    name: file.name,
-    size: file.size,
-    lastModified: file.lastModified,
-    status: 'ok',
-    error: null,
-    objectUrl: null,
-    width: null, height: null,
-    detectedFormat: null, detectedMime: null,
-    extMismatch: null,
-    filenameHeuristic: null,
-    exif: null, xmp: null, xmpFields: null,
-    hasIRB: false, hasJUMBF: false,
-    quantTables: [], jpegQuality: null,
-    aiMarkers: [],
-    thumbnailUrl: null,
-    thumbnailMismatch: false,
-    sha256: null,
-    authenticity: null
-  };
+/* ---------------------------------------------------------------------- */
+/* 1. Inicio                                                               */
+/* ---------------------------------------------------------------------- */
 
+document.getElementById('btnComenzar').addEventListener('click', () => {
+  state.patente = document.getElementById('patenteInput').value.trim();
+  showScreen('screenUbicacion');
+  solicitarUbicacion();
+});
+
+/* ---------------------------------------------------------------------- */
+/* 2. Ubicación                                                            */
+/* ---------------------------------------------------------------------- */
+
+function renderUbicEstado(msg, tone) {
+  const box = document.getElementById('ubicEstado');
+  box.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'card status-box' + (tone ? ' ' + tone : '');
+  div.innerHTML = msg;
+  box.appendChild(div);
+}
+
+function calificarPrecision(accuracy) {
+  if (accuracy <= 50) return { tone: 'ok', texto: 'Precisión buena' };
+  if (accuracy <= 150) return { tone: 'warn', texto: 'Precisión moderada — si podés, reintentá al aire libre' };
+  return { tone: 'bad', texto: 'Precisión baja — te recomendamos reintentar' };
+}
+
+function solicitarUbicacion() {
+  document.getElementById('btnConfirmarUbic').disabled = true;
+  renderUbicEstado('<span class="spinner"></span> Obteniendo tu ubicación…', null);
+
+  if (!('geolocation' in navigator)) {
+    renderUbicEstado('Este navegador no soporta geolocalización. Probá desde otro dispositivo o navegador.', 'bad');
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      state.ubicacion = { lat: latitude, lng: longitude, accuracy, capturedAt: Date.now() };
+      const cal = calificarPrecision(accuracy);
+      renderUbicEstado(`
+        <div>
+          <div><strong>Ubicación detectada</strong></div>
+          <div class="mono" style="font-size:12.5px; margin-top:4px;">${latitude.toFixed(6)}, ${longitude.toFixed(6)}</div>
+          <div class="ubic-precision">${cal.texto} (±${Math.round(accuracy)} m)</div>
+          <div class="btn-row" style="margin-top:8px;">
+            <a class="link-btn" href="https://www.google.com/maps?q=${latitude},${longitude}" target="_blank" rel="noopener noreferrer">Ver en el mapa</a>
+          </div>
+        </div>`, cal.tone);
+      document.getElementById('btnConfirmarUbic').disabled = false;
+    },
+    (err) => {
+      let msg = 'No pudimos obtener tu ubicación.';
+      if (err.code === err.PERMISSION_DENIED) msg = 'Denegaste el permiso de ubicación. Activalo en la configuración del navegador para continuar.';
+      else if (err.code === err.TIMEOUT) msg = 'Se agotó el tiempo esperando el GPS. Probá de nuevo, preferentemente al aire libre.';
+      renderUbicEstado(msg, 'bad');
+      state.ubicacion = null;
+      document.getElementById('btnConfirmarUbic').disabled = true;
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+  );
+}
+
+document.getElementById('btnReintentarUbic').addEventListener('click', solicitarUbicacion);
+document.getElementById('btnConfirmarUbic').addEventListener('click', () => {
+  if (!state.ubicacion) return;
+  showScreen('screenCamara');
+  iniciarCamara();
+});
+
+/* ---------------------------------------------------------------------- */
+/* 3. Cámara                                                               */
+/* ---------------------------------------------------------------------- */
+
+const video = document.getElementById('video');
+const camaraError = document.getElementById('camaraError');
+const btnDisparar = document.getElementById('btnDisparar');
+
+async function iniciarCamara() {
+  camaraError.textContent = '';
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-
-    const sniff = sniffFormat(bytes);
-    record.detectedFormat = sniff.format;
-    record.detectedMime = sniff.mime;
-    record.extMismatch = extensionMismatch(file.name, sniff.mime);
-    record.filenameHeuristic = parseFilenameHeuristics(file.name);
-
-    record.sha256 = await sha256Hex(arrayBuffer);
-
-    if (sniff.format === 'JPEG') {
-      const segs = parseJPEGSegments(arrayBuffer);
-      record.exif = segs.exif;
-      record.xmp = segs.xmp;
-      record.hasIRB = segs.hasIRB;
-      record.hasJUMBF = segs.hasJUMBF;
-      record.quantTables = segs.quantTables;
-      record.jpegQuality = estimateJpegQuality(segs.quantTables);
-    } else if (sniff.format === 'PNG') {
-      const chunks = parsePNGChunks(arrayBuffer);
-      record.exif = chunks.exif;
-      record.pngText = chunks.text;
-      if (chunks.hasStableDiffusionParams) record.aiMarkers.push('Chunk PNG "parameters" presente (típico de Stable Diffusion / Automatic1111)');
-    } else if (sniff.format === 'WebP') {
-      const chunks = parseWebPChunks(arrayBuffer);
-      record.exif = chunks.exif;
-      record.xmp = chunks.xmp;
-    } else if (sniff.format.startsWith('HEIC') || sniff.format.startsWith('HEIF') || sniff.format === 'AVIF') {
-      record.status = 'limited';
-      record.error = 'Formato ' + sniff.format + ': el navegador puede no previsualizarlo. Se muestran solo datos de archivo.';
-    }
-
-    record.xmpFields = extractXMPFields(record.xmp);
-    const softwareTag = record.exif && record.exif.ifd0 && record.exif.ifd0.Software;
-    const aiHits = detectAIMarkers({ software: softwareTag, xmpFields: record.xmpFields, pngText: record.pngText });
-    record.aiMarkers.push(...aiHits);
-
-    // Preview + dimensions (best effort; HEIC/AVIF may fail to render in-browser)
-    try {
-      record.objectUrl = URL.createObjectURL(file);
-      const dims = await getImageDimensions(record.objectUrl);
-      record.width = dims.width;
-      record.height = dims.height;
-    } catch (e) { /* leave dims null */ }
-
-    // Embedded EXIF thumbnail
-    if (record.exif && record.exif.thumbnail && record.exif.thumbnail.length > 0) {
-      try {
-        const blob = new Blob([record.exif.thumbnail], { type: 'image/jpeg' });
-        record.thumbnailUrl = URL.createObjectURL(blob);
-        const thumbDims = await getImageDimensions(record.thumbnailUrl);
-        if (record.width && record.height && thumbDims.width && thumbDims.height) {
-          const mainRatio = record.width / record.height;
-          const thumbRatio = thumbDims.width / thumbDims.height;
-          if (Math.abs(mainRatio - thumbRatio) > 0.05) record.thumbnailMismatch = true;
-        }
-      } catch (e) { /* thumbnail not decodable; not a hard error */ }
-    }
-
-    record.authenticity = evaluateAuthenticity(record);
+    state.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false
+    });
+    video.srcObject = state.stream;
+    btnDisparar.disabled = false;
   } catch (e) {
-    record.status = 'error';
-    record.error = 'No se pudo analizar el archivo: ' + (e && e.message ? e.message : String(e));
-    record.authenticity = { level: 'red', findings: ['Error de análisis: ' + record.error] };
+    camaraError.textContent = 'No pudimos acceder a la cámara. Revisá los permisos del navegador e intentá de nuevo.';
+    btnDisparar.disabled = true;
   }
-
-  return record;
 }
 
-/* ---------------------------------------------------------------------- */
-/* Batch ingestion with progress, chunked to avoid blocking the UI        */
-/* ---------------------------------------------------------------------- */
-
-function idleChunk(work) {
-  return new Promise((resolve) => {
-    const cb = () => resolve(work());
-    if ('requestIdleCallback' in window) requestIdleCallback(cb, { timeout: 200 });
-    else setTimeout(cb, 0);
+function renderThumbs() {
+  const strip = document.getElementById('thumbStrip');
+  strip.innerHTML = '';
+  state.fotos.forEach((foto, idx) => {
+    const div = document.createElement('div');
+    div.className = 'thumb';
+    const img = document.createElement('img');
+    img.src = foto.dataUrl;
+    div.appendChild(img);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.textContent = '✕';
+    del.setAttribute('aria-label', 'Borrar foto');
+    del.addEventListener('click', () => eliminarFoto(idx));
+    div.appendChild(del);
+    strip.appendChild(div);
   });
+  document.getElementById('fotoCounter').textContent = `${state.fotos.length} / ${MAX_FOTOS}`;
+  btnDisparar.disabled = state.fotos.length >= MAX_FOTOS;
+  document.getElementById('btnFinalizar').disabled = state.fotos.length === 0;
 }
 
-async function handleFiles(fileList) {
-  const files = Array.from(fileList).filter(f => /^image\//.test(f.type) || /\.(heic|heif|avif|jpg|jpeg|png|gif|webp|tiff?|bmp)$/i.test(f.name));
-  if (files.length === 0) return;
-
-  const progressWrap = document.getElementById('progressWrap');
-  const progressFill = document.getElementById('progressFill');
-  const progressLabel = document.getElementById('progressLabel');
-  progressWrap.classList.add('active');
-
-  let done = 0;
-  for (const file of files) {
-    await idleChunk(async () => {
-      const record = await analyzeFile(file);
-      state.items.push(record);
-      done++;
-      progressFill.style.width = Math.round((done / files.length) * 100) + '%';
-      progressLabel.textContent = `${done} / ${files.length} — ${file.name}`;
-      renderList();
-    });
-  }
-
-  progressLabel.textContent = `${done} / ${files.length} — completado`;
-  setTimeout(() => { progressWrap.classList.remove('active'); }, 900);
-  renderList();
+function eliminarFoto(idx) {
+  state.fotos.splice(idx, 1);
+  renderThumbs();
 }
 
-/* ======================================================================
-   Rendering
-   ====================================================================== */
-
-function badgeInfo(level) {
-  switch (level) {
-    case 'green': return { cls: 'green', dot: '🟢', label: 'Consistente con original de cámara' };
-    case 'yellow': return { cls: 'yellow', dot: '🟡', label: 'Sin metadatos / parcial' };
-    case 'orange': return { cls: 'orange', dot: '🟠', label: 'Editada' };
-    case 'red': return { cls: 'red', dot: '🔴', label: 'Inconsistencias' };
-    default: return { cls: 'yellow', dot: '🟡', label: 'Desconocido' };
-  }
-}
-
-function getBestDate(item) {
-  const dto = item.exif && item.exif.exif && item.exif.exif.DateTimeOriginal;
-  if (dto) { const d = parseExifDateString(dto); if (d) return { date: d, source: 'EXIF (captura)' }; }
-  if (item.filenameHeuristic && item.filenameHeuristic.date) return { date: item.filenameHeuristic.date, source: 'nombre de archivo (' + item.filenameHeuristic.dateKind + ')' };
-  return { date: new Date(item.lastModified), source: 'lastModified del archivo' };
-}
-
-function matchesFilters(item) {
-  if (state.search && !item.name.toLowerCase().includes(state.search.toLowerCase())) return false;
-  if (state.filters.gps && !(item.exif && item.exif.gps && item.exif.gps.latitudeDecimal != null)) return false;
-  if (state.filters.noexif && item.authenticity && item.authenticity.level !== 'yellow') return false;
-  if (state.filters.edited && item.authenticity && item.authenticity.level !== 'orange') return false;
-  if (state.filters.inconsistent && item.authenticity && item.authenticity.level !== 'red') return false;
-  return true;
-}
-
-function sortItems(items) {
-  const arr = items.slice();
-  if (state.sort === 'name') arr.sort((a, b) => a.name.localeCompare(b.name));
-  else if (state.sort === 'size') arr.sort((a, b) => b.size - a.size);
-  else if (state.sort === 'date') arr.sort((a, b) => getBestDate(b).date - getBestDate(a).date);
-  return arr;
-}
-
-function renderList() {
-  const list = document.getElementById('list');
-  const emptyState = document.getElementById('emptyState');
-  const resultCount = document.getElementById('resultCount');
-
-  if (state.items.length === 0) {
-    emptyState.style.display = '';
-    Array.from(list.querySelectorAll('.row')).forEach(r => r.remove());
-    resultCount.textContent = '';
-    return;
-  }
-  emptyState.style.display = 'none';
-
-  const visible = sortItems(state.items.filter(matchesFilters));
-  resultCount.textContent = `${visible.length} / ${state.items.length}`;
-
-  Array.from(list.querySelectorAll('.row')).forEach(r => r.remove());
-
-  for (const item of visible) {
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.tabIndex = 0;
-    row.dataset.id = item.id;
-    row.setAttribute('role', 'button');
-    row.setAttribute('aria-selected', String(item.id === state.selectedId));
-    if (item.id === state.selectedId) row.classList.add('selected');
-    if (state.compareSet[0] === item.id) row.classList.add('compare-a');
-    if (state.compareSet[1] === item.id) row.classList.add('compare-b');
-
-    const thumb = document.createElement('div');
-    thumb.className = 'row__thumb';
-    if (item.status === 'error') {
-      thumb.innerHTML = '<span class="err-icon">⚠</span>';
-    } else if (item.objectUrl) {
-      const img = document.createElement('img');
-      img.src = item.objectUrl;
-      img.alt = '';
-      img.loading = 'lazy';
-      thumb.appendChild(img);
-    } else {
-      thumb.innerHTML = '<span class="err-icon">🖼</span>';
-    }
-    row.appendChild(thumb);
-
-    const body = document.createElement('div');
-    body.className = 'row__body';
-
-    const nameEl = document.createElement('div');
-    nameEl.className = 'row__name';
-    nameEl.textContent = item.name;
-    body.appendChild(nameEl);
-
-    const meta = document.createElement('div');
-    meta.className = 'row__meta';
-    if (item.authenticity) {
-      const bi = badgeInfo(item.authenticity.level);
-      const badge = document.createElement('span');
-      badge.className = 'badge ' + bi.cls;
-      badge.textContent = bi.dot + ' ' + bi.label;
-      meta.appendChild(badge);
-    }
-    const camera = item.exif && item.exif.ifd0 && (item.exif.ifd0.Model || item.exif.ifd0.Make);
-    const sub = document.createElement('span');
-    sub.className = 'row__submeta';
-    const bd = getBestDate(item);
-    const dateStr = bd.date && !isNaN(bd.date) ? bd.date.toLocaleDateString('es-AR') : '—';
-    sub.textContent = [camera, dateStr, formatBytes(item.size)].filter(Boolean).join(' · ');
-    meta.appendChild(sub);
-    if (item.exif && item.exif.gps && item.exif.gps.latitudeDecimal != null) {
-      const gps = document.createElement('span');
-      gps.className = 'gps-icon';
-      gps.textContent = '📍';
-      gps.title = 'Tiene coordenadas GPS';
-      meta.appendChild(gps);
-    }
-    body.appendChild(meta);
-
-    if (item.error) {
-      const err = document.createElement('div');
-      err.className = 'row__err';
-      err.textContent = item.error;
-      body.appendChild(err);
-    }
-
-    row.appendChild(body);
-    row.addEventListener('click', (ev) => onRowActivate(item.id, ev));
-    row.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onRowActivate(item.id, ev); }
-    });
-    list.appendChild(row);
-  }
-}
-
-function onRowActivate(id, ev) {
-  if (ev && ev.shiftKey) {
-    toggleCompare(id);
-    return;
-  }
-  state.selectedId = id;
-  renderList();
-  renderDetail();
-  if (window.innerWidth <= 900) document.getElementById('detailPanel').classList.add('open');
-}
-
-function toggleCompare(id) {
-  const idx = state.compareSet.indexOf(id);
-  if (idx > -1) { state.compareSet.splice(idx, 1); }
-  else {
-    if (state.compareSet.length >= 2) state.compareSet.shift();
-    state.compareSet.push(id);
-  }
-  document.getElementById('compareBtn').textContent = `⇄ Comparar (${state.compareSet.length}/2)`;
-  document.getElementById('compareBtn').disabled = state.compareSet.length !== 2;
-  renderList();
-}
-
-/* ---------------------------------------------------------------------- */
-/* Detail panel                                                            */
-/* ---------------------------------------------------------------------- */
-
-function section(title, contentBuilder, openByDefault) {
-  const details = document.createElement('details');
-  details.className = 'section';
-  if (openByDefault) details.open = true;
-  const summary = document.createElement('summary');
-  summary.textContent = title;
-  details.appendChild(summary);
-  const body = document.createElement('div');
-  contentBuilder(body);
-  details.appendChild(body);
-  return details;
-}
-
-function kvTable(pairs) {
-  const table = document.createElement('table');
-  table.className = 'kv';
-  for (const [k, v] of pairs) {
-    if (v === undefined || v === null || v === '') continue;
-    const tr = document.createElement('tr');
-    const tdK = document.createElement('td'); tdK.textContent = k;
-    const tdV = document.createElement('td'); tdV.textContent = v;
-    tr.appendChild(tdK); tr.appendChild(tdV);
-    table.appendChild(tr);
-  }
-  return table;
-}
-
-function noData(msg) {
-  const p = document.createElement('p');
-  p.className = 'no-data';
-  p.textContent = msg;
-  return p;
-}
-
-function copyBtn(text) {
-  const btn = document.createElement('button');
-  btn.className = 'copy-btn';
-  btn.type = 'button';
-  btn.textContent = 'Copiar';
-  btn.addEventListener('click', () => {
-    navigator.clipboard.writeText(text).then(() => { btn.textContent = 'Copiado ✓'; setTimeout(() => btn.textContent = 'Copiar', 1200); });
-  });
-  return btn;
-}
-
-function renderDetail() {
-  const content = document.getElementById('detailContent');
-  content.innerHTML = '';
-  const item = state.items.find(i => i.id === state.selectedId);
-  if (!item) {
-    const empty = document.createElement('div');
-    empty.className = 'detail__empty';
-    empty.textContent = 'Seleccioná una imagen de la lista para ver su detalle.';
-    content.appendChild(empty);
-    return;
-  }
-
-  const preview = document.createElement('div');
-  preview.className = 'detail__preview';
-  if (item.objectUrl) {
-    const img = document.createElement('img');
-    img.src = item.objectUrl;
-    img.alt = item.name;
-    preview.appendChild(img);
-  } else {
-    preview.appendChild(noData('Vista previa no disponible para este formato en este navegador.'));
-  }
-  content.appendChild(preview);
-
-  if (item.thumbnailUrl) {
-    const cmp = document.createElement('div');
-    cmp.className = 'detail__thumb-compare';
-    const img = document.createElement('img');
-    img.src = item.thumbnailUrl;
-    img.alt = 'Miniatura EXIF embebida';
-    cmp.appendChild(img);
-    const label = document.createElement('span');
-    label.textContent = 'Miniatura EXIF embebida (IFD1)' + (item.thumbnailMismatch ? ' — ⚠ no coincide en proporción con la imagen principal' : ' — proporción consistente');
-    cmp.appendChild(label);
-    content.appendChild(cmp);
-  }
-
-  const title = document.createElement('div');
-  title.className = 'detail__title';
-  title.textContent = item.name;
-  content.appendChild(title);
-
-  if (item.authenticity) {
-    const bi = badgeInfo(item.authenticity.level);
-    const row = document.createElement('div');
-    row.className = 'detail__badge-row';
-    const badge = document.createElement('span');
-    badge.className = 'badge ' + bi.cls;
-    badge.textContent = bi.dot + ' ' + bi.label;
-    row.appendChild(badge);
-    const text = document.createElement('div');
-    text.className = 'detail__badge-text';
-    const ul = document.createElement('ul');
-    for (const f of item.authenticity.findings) { const li = document.createElement('li'); li.textContent = f; ul.appendChild(li); }
-    text.appendChild(ul);
-    row.appendChild(text);
-    content.appendChild(row);
-  }
-
-  // Archivo
-  content.appendChild(section('Archivo', (body) => {
-    body.appendChild(kvTable([
-      ['Nombre original', item.name],
-      ['Tamaño', `${formatBytes(item.size)} (${item.size.toLocaleString('es-AR')} bytes)`],
-      ['Extensión declarada', item.extMismatch && item.extMismatch.extension ? '.' + item.extMismatch.extension : '—'],
-      ['Tipo real (magic bytes)', item.detectedFormat + (item.detectedMime ? ' — ' + item.detectedMime : '')],
-      ['Coincide extensión/contenido', item.extMismatch && item.extMismatch.hasExtension ? (item.extMismatch.mismatch ? '⚠ NO coincide' : 'Sí coincide') : '—'],
-      ['Dimensiones', item.width && item.height ? `${item.width} × ${item.height} px` : 'No disponible'],
-      ['Megapíxeles', item.width && item.height ? (item.width * item.height / 1e6).toFixed(2) + ' MP' : '—'],
-      ['Relación de aspecto', item.width && item.height ? aspectRatio(item.width, item.height) : '—'],
-      ['lastModified', new Date(item.lastModified).toLocaleString('es-AR')]
-    ]));
-    const hashRow = document.createElement('div');
-    hashRow.className = 'kv';
-    const hashLabel = document.createElement('div');
-    hashLabel.style.marginTop = '8px';
-    hashLabel.innerHTML = '<span style="color:var(--text-faint); font-size:12px;">SHA-256 (cadena de custodia)</span>';
-    body.appendChild(hashLabel);
-    const hashBox = document.createElement('div');
-    hashBox.className = 'hash-value mono';
-    hashBox.textContent = item.sha256 || '—';
-    if (item.sha256) hashBox.appendChild(copyBtn(item.sha256));
-    body.appendChild(hashBox);
-  }, true));
-
-  // Fecha y hora
-  content.appendChild(section('Fecha y hora', (body) => {
-    const rows = [];
-    const dto = item.exif && item.exif.exif && item.exif.exif.DateTimeOriginal;
-    const cd = item.exif && item.exif.exif && item.exif.exif.CreateDate;
-    const md = item.exif && item.exif.ifd0 && item.exif.ifd0.ModifyDate;
-    const off = item.exif && item.exif.exif && (item.exif.exif.OffsetTimeOriginal || item.exif.exif.OffsetTime);
-    rows.push(['DateTimeOriginal (EXIF)', dto || null]);
-    rows.push(['CreateDate (EXIF)', cd || null]);
-    rows.push(['ModifyDate (EXIF)', md || null]);
-    rows.push(['Zona horaria (OffsetTime)', off || null]);
-    if (item.filenameHeuristic) {
-      rows.push(['Origen por nombre de archivo', item.filenameHeuristic.source]);
-      if (item.filenameHeuristic.date) rows.push(['Fecha (del nombre, ' + item.filenameHeuristic.dateKind + ')', item.filenameHeuristic.date.toLocaleString('es-AR')]);
-      rows.push(['Nota', item.filenameHeuristic.note]);
-    }
-    rows.push(['lastModified del archivo', new Date(item.lastModified).toLocaleString('es-AR')]);
-    const anyReal = dto || cd || md || (item.filenameHeuristic && item.filenameHeuristic.date);
-    if (!anyReal) body.appendChild(noData('Sin fechas de EXIF ni de nombre de archivo reconocible. Solo se dispone de lastModified, que puede no reflejar la fecha real de captura.'));
-    body.appendChild(kvTable(rows));
-  }, true));
-
-  // Cámara y disparo
-  content.appendChild(section('Cámara y disparo', (body) => {
-    const e = item.exif;
-    if (!e || (!e.ifd0.Make && !e.ifd0.Model && Object.keys(e.exif || {}).length === 0)) {
-      body.appendChild(noData('Sin datos de cámara. Es lo esperable si la imagen pasó por WhatsApp, Instagram, Facebook o Telegram.'));
-      return;
-    }
-    body.appendChild(kvTable([
-      ['Marca', e.ifd0.Make], ['Modelo', e.ifd0.Model],
-      ['Lente', [e.exif.LensMake, e.exif.LensModel].filter(Boolean).join(' ')],
-      ['ISO', fmtVal(e.exif.ISO)],
-      ['Apertura', e.exif.FNumber ? 'f/' + fmtVal(e.exif.FNumber) : ''],
-      ['Tiempo de exposición', e.exif.ExposureTime ? (e.exif.ExposureTime < 1 ? '1/' + Math.round(1 / e.exif.ExposureTime) + ' s' : e.exif.ExposureTime + ' s') : ''],
-      ['Distancia focal', e.exif.FocalLength ? fmtVal(e.exif.FocalLength) + ' mm' : ''],
-      ['Focal equiv. 35mm', e.exif.FocalLengthIn35mm ? fmtVal(e.exif.FocalLengthIn35mm) + ' mm' : ''],
-      ['Flash', e.exif.Flash != null ? (e.exif.Flash % 2 === 1 ? 'Disparado' : 'No disparado') : ''],
-      ['Balance de blancos', e.exif.WhiteBalance != null ? (e.exif.WhiteBalance === 0 ? 'Automático' : 'Manual') : ''],
-      ['Espacio de color', e.exif.ColorSpace === 1 ? 'sRGB' : fmtVal(e.exif.ColorSpace)],
-      ['Número de serie del cuerpo', e.exif.BodySerialNumber],
-      ['Propietario', e.exif.OwnerName],
-      ['Orientación EXIF', fmtVal(e.ifd0.Orientation)]
-    ]));
-  }, true));
-
-  // Ubicación
-  content.appendChild(section('Ubicación', (body) => {
-    const gps = item.exif && item.exif.gps;
-    if (!gps || gps.latitudeDecimal == null) {
-      body.appendChild(noData('Sin coordenadas GPS embebidas.'));
-      return;
-    }
-    const lat = gps.latitudeDecimal, lon = gps.longitudeDecimal;
-    body.appendChild(kvTable([
-      ['Latitud (decimal)', lat.toFixed(6)],
-      ['Longitud (decimal)', lon.toFixed(6)],
-      ['Latitud (DMS)', formatDMS(lat, true)],
-      ['Longitud (DMS)', formatDMS(lon, false)],
-      ['Altitud', gps.GPSAltitude != null ? fmtVal(gps.GPSAltitude) + ' m' : ''],
-      ['Fecha GPS', gps.GPSDateStamp || '']
-    ]));
-    const btnRow = document.createElement('div');
-    btnRow.className = 'btn-row';
-    const gmaps = document.createElement('a');
-    gmaps.href = `https://www.google.com/maps?q=${lat},${lon}`;
-    gmaps.target = '_blank'; gmaps.rel = 'noopener noreferrer';
-    gmaps.className = 'link-btn'; gmaps.textContent = 'Abrir en Google Maps';
-    const osm = document.createElement('a');
-    osm.href = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}`;
-    osm.target = '_blank'; osm.rel = 'noopener noreferrer';
-    osm.className = 'link-btn'; osm.textContent = 'Abrir en OpenStreetMap';
-    btnRow.appendChild(gmaps); btnRow.appendChild(osm);
-    body.appendChild(btnRow);
-  }, true));
-
-  // Software / edición
-  content.appendChild(section('Software / edición', (body) => {
-    const software = item.exif && item.exif.ifd0 && item.exif.ifd0.Software;
-    const rows = [];
-    if (software) rows.push(['Software (EXIF)', software]);
-    if (item.xmpFields) {
-      if (item.xmpFields.CreatorTool) rows.push(['XMP CreatorTool', item.xmpFields.CreatorTool]);
-      if (item.xmpFields.DocumentID) rows.push(['XMP DocumentID', item.xmpFields.DocumentID]);
-      if (item.xmpFields.hasHistory) rows.push(['Historial de edición XMP', 'Presente']);
-    }
-    if (item.hasIRB) rows.push(['Photoshop IRB (APP13)', 'Presente']);
-    if (item.hasJUMBF) rows.push(['JUMBF / C2PA (APP11)', 'Presente — credenciales de contenido detectadas']);
-    if (item.jpegQuality != null) rows.push(['Calidad JPEG estimada (DQT)', item.jpegQuality + ' / 100' + (item.jpegQuality < 80 ? ' — posible recompresión' : '')]);
-    if (item.aiMarkers && item.aiMarkers.length) rows.push(['Marcadores de IA generativa', item.aiMarkers.join(' | ')]);
-    if (rows.length === 0) { body.appendChild(noData('Sin señales de edición ni de generación por IA detectadas.')); return; }
-    body.appendChild(kvTable(rows));
-  }, false));
-
-  // EXIF crudo
-  content.appendChild(section('EXIF crudo (todos los tags)', (body) => {
-    const e = item.exif;
-    if (!e) { body.appendChild(noData('No hay datos EXIF en este archivo.')); return; }
-    const groups = [['IFD0', e.ifd0], ['ExifIFD', e.exif], ['GPS IFD', e.gps]];
-    for (const [label, tags] of groups) {
-      if (!tags || Object.keys(tags).length === 0) continue;
-      const h = document.createElement('div');
-      h.style.cssText = 'font-size:11px; color:var(--text-faint); margin:8px 0 2px; text-transform:uppercase; letter-spacing:.04em;';
-      h.textContent = label;
-      body.appendChild(h);
-      const rows = Object.entries(tags).filter(([k]) => k !== 'latitudeDecimal' && k !== 'longitudeDecimal').map(([k, v]) => [LABELS[k] || k, fmtVal(v)]);
-      body.appendChild(kvTable(rows));
-    }
-  }, false));
-
-  // Búsqueda inversa
-  content.appendChild(section('Búsqueda inversa de imagen', (body) => {
-    const p = document.createElement('p');
-    p.className = 'no-data';
-    p.style.fontStyle = 'normal';
-    p.textContent = 'Abre estos servicios en una pestaña nueva; deberás subir o pegar el enlace de la imagen manualmente (no se envía nada automáticamente).';
-    body.appendChild(p);
-    const btnRow = document.createElement('div');
-    btnRow.className = 'btn-row';
-    const links = [
-      ['Google Lens', 'https://lens.google.com/'],
-      ['TinEye', 'https://tineye.com/'],
-      ['Yandex Images', 'https://yandex.com/images/'],
-      ['Bing Visual Search', 'https://www.bing.com/visualsearch']
-    ];
-    for (const [label, url] of links) {
-      const a = document.createElement('a');
-      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      a.className = 'link-btn'; a.textContent = label;
-      btnRow.appendChild(a);
-    }
-    body.appendChild(btnRow);
-  }, false));
-
-  const actions = document.createElement('div');
-  actions.className = 'detail__actions';
-  const copyJsonBtn = document.createElement('button');
-  copyJsonBtn.className = 'link-btn'; copyJsonBtn.type = 'button'; copyJsonBtn.textContent = 'Copiar JSON de esta imagen';
-  copyJsonBtn.addEventListener('click', () => navigator.clipboard.writeText(JSON.stringify(recordToPlain(item), null, 2)));
-  actions.appendChild(copyJsonBtn);
-  content.appendChild(actions);
-}
-
-/* ======================================================================
-   Compare
-   ====================================================================== */
-
-function renderCompare() {
-  const [idA, idB] = state.compareSet;
-  const a = state.items.find(i => i.id === idA);
-  const b = state.items.find(i => i.id === idB);
-  if (!a || !b) return;
-  const grid = document.getElementById('compareGrid');
-  grid.innerHTML = '';
-  for (const item of [a, b]) {
-    const col = document.createElement('div');
-    col.className = 'compare-col';
-    const img = document.createElement('img');
-    img.src = item.objectUrl || '';
-    img.alt = item.name;
-    col.appendChild(img);
-    const h = document.createElement('div');
-    h.className = 'mono';
-    h.style.cssText = 'font-size:12px; margin-top:8px; word-break:break-all;';
-    h.textContent = item.name;
-    col.appendChild(h);
-    const table = document.createElement('table');
-    const rows = [
-      ['Peso', formatBytes(item.size)],
-      ['Dimensiones', item.width && item.height ? `${item.width}×${item.height}` : '—'],
-      ['Calidad JPEG est.', item.jpegQuality != null ? item.jpegQuality : '—'],
-      ['SHA-256', item.sha256 ? item.sha256.slice(0, 16) + '…' : '—'],
-      ['Cámara', item.exif && item.exif.ifd0 && (item.exif.ifd0.Model || item.exif.ifd0.Make) || '—'],
-      ['Fecha captura', item.exif && item.exif.exif && item.exif.exif.DateTimeOriginal || '—'],
-      ['Software', item.exif && item.exif.ifd0 && item.exif.ifd0.Software || '—'],
-      ['Semáforo', item.authenticity ? badgeInfo(item.authenticity.level).label : '—']
-    ];
-    for (const [k, v] of rows) {
-      const tr = document.createElement('tr');
-      const tdK = document.createElement('td'); tdK.textContent = k;
-      const tdV = document.createElement('td'); tdV.textContent = v;
-      tr.appendChild(tdK); tr.appendChild(tdV);
-      table.appendChild(tr);
-    }
-    col.appendChild(table);
-    grid.appendChild(col);
-  }
-  document.getElementById('comparePanel').classList.add('open');
-}
-
-/* ======================================================================
-   Export: CSV, JSON, HTML report
-   ====================================================================== */
-
-function recordToPlain(item) {
-  return {
-    nombre: item.name, tamañoBytes: item.size, formatoDetectado: item.detectedFormat,
-    mimeDetectado: item.detectedMime, extensionCoincide: item.extMismatch ? !item.extMismatch.mismatch : null,
-    ancho: item.width, alto: item.height, lastModified: new Date(item.lastModified).toISOString(),
-    sha256: item.sha256, heuristicaNombre: item.filenameHeuristic,
-    exif: item.exif ? { ifd0: item.exif.ifd0, exif: item.exif.exif, gps: item.exif.gps } : null,
-    xmp: item.xmpFields, hasIRB: item.hasIRB, hasJUMBF: item.hasJUMBF,
-    calidadJpegEstimada: item.jpegQuality, marcadoresIA: item.aiMarkers,
-    semaforo: item.authenticity ? item.authenticity.level : null,
-    hallazgos: item.authenticity ? item.authenticity.findings : [],
-    error: item.error
-  };
-}
-
-function csvEscape(v) {
-  if (v == null) return '';
-  const s = String(v);
-  if (/[;"\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
-  return s;
-}
-
-function exportCSV() {
-  const cols = ['Nombre', 'Semáforo', 'Tamaño (bytes)', 'Formato real', 'Extensión coincide',
-    'Ancho', 'Alto', 'Cámara', 'Fecha captura (EXIF)', 'GPS lat', 'GPS lon', 'Software',
-    'Calidad JPEG est.', 'SHA-256', 'Hallazgos'];
-  const rows = [cols.join(';')];
-  for (const item of state.items) {
-    const e = item.exif;
-    const row = [
-      item.name,
-      item.authenticity ? badgeInfo(item.authenticity.level).label : '',
-      item.size,
-      item.detectedFormat,
-      item.extMismatch ? (item.extMismatch.mismatch ? 'NO' : 'Sí') : '',
-      item.width || '', item.height || '',
-      e && e.ifd0 && (e.ifd0.Model || e.ifd0.Make) || '',
-      e && e.exif && e.exif.DateTimeOriginal || '',
-      e && e.gps && e.gps.latitudeDecimal != null ? e.gps.latitudeDecimal.toFixed(6) : '',
-      e && e.gps && e.gps.longitudeDecimal != null ? e.gps.longitudeDecimal.toFixed(6) : '',
-      e && e.ifd0 && e.ifd0.Software || '',
-      item.jpegQuality != null ? item.jpegQuality : '',
-      item.sha256 || '',
-      item.authenticity ? item.authenticity.findings.join(' | ') : ''
-    ].map(csvEscape);
-    rows.push(row.join(';'));
-  }
-  const csv = '﻿' + rows.join('\r\n');
-  downloadBlob(csv, 'analisis-metadatos.csv', 'text/csv;charset=utf-8');
-}
-
-function exportJSON() {
-  const data = {
-    generadoEl: new Date().toISOString(),
-    aviso: 'El análisis de metadatos es indiciario; no reemplaza un peritaje forense y los metadatos pueden falsificarse con herramientas comunes.',
-    imagenes: state.items.map(recordToPlain)
-  };
-  downloadBlob(JSON.stringify(data, null, 2), 'analisis-metadatos.json', 'application/json;charset=utf-8');
-}
-
-async function blobToDataURL(url) {
-  const resp = await fetch(url);
-  const blob = await resp.blob();
+function blobToDataURL(blob) {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -1529,142 +306,139 @@ async function blobToDataURL(url) {
   });
 }
 
-async function exportHTMLReport() {
-  const rowsHtml = [];
-  for (const item of state.items) {
-    const thumbData = item.objectUrl ? await blobToDataURL(item.objectUrl).catch(() => null) : null;
-    const bi = item.authenticity ? badgeInfo(item.authenticity.level) : null;
-    const e = item.exif;
-    rowsHtml.push(`
-      <section class="rep-item">
-        <div class="rep-thumb">${thumbData ? `<img src="${thumbData}" alt="">` : '<div class="rep-noimg">Sin vista previa</div>'}</div>
-        <div class="rep-body">
-          <h3>${escapeHtml(item.name)}</h3>
-          ${bi ? `<span class="rep-badge rep-${bi.cls}">${bi.dot} ${escapeHtml(bi.label)}</span>` : ''}
-          <table class="rep-kv">
-            <tr><td>Tamaño</td><td>${formatBytes(item.size)}</td></tr>
-            <tr><td>Formato real</td><td>${escapeHtml(item.detectedFormat || '')}</td></tr>
-            <tr><td>Dimensiones</td><td>${item.width && item.height ? item.width + '×' + item.height : '—'}</td></tr>
-            <tr><td>SHA-256</td><td class="mono-cell">${item.sha256 || '—'}</td></tr>
-            <tr><td>Cámara</td><td>${escapeHtml((e && e.ifd0 && (e.ifd0.Model || e.ifd0.Make)) || '—')}</td></tr>
-            <tr><td>Fecha de captura (EXIF)</td><td>${escapeHtml((e && e.exif && e.exif.DateTimeOriginal) || '—')}</td></tr>
-            <tr><td>GPS</td><td>${e && e.gps && e.gps.latitudeDecimal != null ? e.gps.latitudeDecimal.toFixed(6) + ', ' + e.gps.longitudeDecimal.toFixed(6) : '—'}</td></tr>
-            <tr><td>Software</td><td>${escapeHtml((e && e.ifd0 && e.ifd0.Software) || '—')}</td></tr>
-          </table>
-          ${item.authenticity ? `<ul class="rep-findings">${item.authenticity.findings.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul>` : ''}
-        </div>
-      </section>`);
+function canvasToBlob(canvas, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+}
+
+// Comprime el frame de la cámara hasta que pese menos de MAX_FOTO_BYTES,
+// bajando primero la calidad JPEG y, si no alcanza, el tamaño del lado más
+// largo. Así cada foto entra cómoda en un documento de Firestore (< 1MB).
+async function capturarYComprimir(video) {
+  const dims = [1280, 960, 720, 480];
+  const qualities = [0.75, 0.6, 0.45, 0.3, 0.18];
+  let lastBlob = null;
+  for (const maxDim of dims) {
+    const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    for (const q of qualities) {
+      const blob = await canvasToBlob(canvas, q);
+      if (!blob) continue;
+      lastBlob = blob;
+      if (blob.size <= MAX_FOTO_BYTES) return blob;
+    }
   }
-
-  const html = `<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>Informe de análisis de metadatos</title>
-<style>
-body{font-family:Arial,sans-serif; background:#f4f4f4; color:#1a1a1a; margin:0; padding:24px;}
-h1{font-size:20px;} .meta{color:#555; font-size:12px; margin-bottom:20px;}
-.rep-item{display:flex; gap:16px; background:#fff; border:1px solid #ddd; border-radius:6px; padding:14px; margin-bottom:14px; page-break-inside:avoid;}
-.rep-thumb img{width:140px; height:140px; object-fit:cover; border-radius:4px; border:1px solid #ccc;}
-.rep-noimg{width:140px; height:140px; display:flex; align-items:center; justify-content:center; background:#eee; color:#888; font-size:11px; border-radius:4px;}
-.rep-body{flex:1; min-width:0;}
-h3{margin:0 0 6px; font-size:14px; word-break:break-all;}
-.rep-badge{display:inline-block; font-size:11px; padding:3px 8px; border-radius:10px; margin-bottom:8px; font-weight:bold;}
-.rep-green{background:#d9f2e3; color:#1b7a43;} .rep-yellow{background:#faf0d0; color:#8a6d1a;}
-.rep-orange{background:#fbe3cf; color:#9a5217;} .rep-red{background:#f8d7d7; color:#a02a2a;}
-.rep-kv{border-collapse:collapse; font-size:12px; width:100%;}
-.rep-kv td{padding:3px 6px; border-bottom:1px solid #eee;}
-.rep-kv td:first-child{color:#666; width:170px;}
-.mono-cell{font-family:monospace; font-size:10.5px; word-break:break-all;}
-.rep-findings{font-size:12px; margin:8px 0 0; padding-left:18px; color:#333;}
-.legal{margin-top:24px; padding:12px; background:#fff3cd; border:1px solid #ffe08a; border-radius:6px; font-size:12px;}
-@media print{ body{background:#fff;} .rep-item{page-break-inside:avoid;} }
-</style></head>
-<body>
-<h1>Informe de análisis de metadatos de imágenes</h1>
-<div class="meta">Generado el ${new Date().toLocaleString('es-AR')} · ${state.items.length} imagen(es) · Herramienta 100% local, sin subida a servidor.</div>
-${rowsHtml.join('\n')}
-<div class="legal"><strong>Aviso:</strong> El análisis de metadatos es indiciario; no reemplaza un peritaje forense y los metadatos pueden falsificarse con herramientas comunes. Para conservar el EXIF de una foto enviada por WhatsApp, debe remitirse como documento/archivo, no como imagen.</div>
-</body></html>`;
-
-  downloadBlob(html, 'informe-metadatos.html', 'text/html;charset=utf-8');
+  return lastBlob; // no se logró bajar del límite; devolvemos la más chica lograda
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-function downloadBlob(content, filename, mime) {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
-
-/* ======================================================================
-   Wiring
-   ====================================================================== */
-
-const dropzone = document.getElementById('dropzone');
-const fileInput = document.getElementById('fileInput');
-
-document.getElementById('pickFilesBtn').addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', (e) => { handleFiles(e.target.files); fileInput.value = ''; });
-
-['dragenter', 'dragover'].forEach(evt => dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.add('dragover'); }));
-['dragleave', 'drop'].forEach(evt => dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove('dragover'); }));
-dropzone.addEventListener('drop', (e) => { if (e.dataTransfer.files) handleFiles(e.dataTransfer.files); });
-
-document.getElementById('searchInput').addEventListener('input', (e) => { state.search = e.target.value; renderList(); });
-document.getElementById('sortSelect').addEventListener('change', (e) => { state.sort = e.target.value; renderList(); });
-
-document.querySelectorAll('.chip[data-filter]').forEach(chip => {
-  chip.addEventListener('click', () => {
-    const key = chip.dataset.filter;
-    state.filters[key] = !state.filters[key];
-    chip.setAttribute('aria-pressed', String(state.filters[key]));
-    renderList();
-  });
+btnDisparar.addEventListener('click', async () => {
+  if (state.fotos.length >= MAX_FOTOS || !video.videoWidth) return;
+  btnDisparar.disabled = true;
+  try {
+    const blob = await capturarYComprimir(video);
+    if (!blob) return;
+    const dataUrl = await blobToDataURL(blob);
+    state.fotos.push({ dataUrl, bytes: blob.size, capturedAt: Date.now() });
+    renderThumbs();
+  } finally {
+    btnDisparar.disabled = state.fotos.length >= MAX_FOTOS;
+  }
 });
 
-document.getElementById('compareBtn').addEventListener('click', renderCompare);
-document.getElementById('compareCloseBtn').addEventListener('click', () => document.getElementById('comparePanel').classList.remove('open'));
+function detenerCamara() {
+  if (state.stream) {
+    state.stream.getTracks().forEach(t => t.stop());
+    state.stream = null;
+  }
+}
 
-const exportBtn = document.getElementById('exportBtn');
-const exportDropdown = document.getElementById('exportDropdown');
-exportBtn.addEventListener('click', () => exportDropdown.classList.toggle('open'));
-document.addEventListener('click', (e) => { if (!e.target.closest('.export-menu')) exportDropdown.classList.remove('open'); });
-exportDropdown.querySelectorAll('button[data-export]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    exportDropdown.classList.remove('open');
-    if (state.items.length === 0) return;
-    if (btn.dataset.export === 'csv') exportCSV();
-    else if (btn.dataset.export === 'json') exportJSON();
-    else if (btn.dataset.export === 'html') exportHTMLReport();
-  });
+/* ---------------------------------------------------------------------- */
+/* 4. Subida                                                               */
+/* ---------------------------------------------------------------------- */
+
+function generarTicketCode() {
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sin 0/O ni 1/I
+  let out = '';
+  for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+
+document.getElementById('btnFinalizar').addEventListener('click', async () => {
+  if (state.fotos.length === 0) return;
+  detenerCamara();
+  showScreen('screenSubiendo');
+  const fill = document.getElementById('subProgressFill');
+  const label = document.getElementById('subProgressLabel');
+  const log = document.getElementById('subLog');
+  const total = state.fotos.length + 1; // +1 por el doc del lote
+  let done = 0;
+  const updateProgress = (msg) => {
+    done++;
+    fill.style.width = Math.round((done / total) * 100) + '%';
+    label.textContent = `${done} / ${total}`;
+    if (msg) log.textContent = msg;
+  };
+
+  try {
+    if (!auth.currentUser) {
+      await signInAnonymously(auth);
+    }
+    const uid = auth.currentUser.uid;
+    state.ticketCode = generarTicketCode();
+
+    const loteRef = doc(collection(db, 'lotes'));
+    state.loteId = loteRef.id;
+
+    await setDoc(loteRef, {
+      ticketCode: state.ticketCode,
+      patente: state.patente || null,
+      ubicacion: state.ubicacion,
+      status: 'pendiente',
+      fotoCount: state.fotos.length,
+      createdAt: serverTimestamp(),
+      creatorUid: uid,
+      userAgent: navigator.userAgent
+    });
+    updateProgress('Lote creado, subiendo fotos…');
+
+    for (let i = 0; i < state.fotos.length; i++) {
+      const foto = state.fotos[i];
+      const fotoId = String(i + 1).padStart(2, '0');
+      await setDoc(doc(db, 'lotes', state.loteId, 'fotos', fotoId), {
+        dataUrl: foto.dataUrl,
+        contentType: 'image/jpeg',
+        capturedAt: foto.capturedAt,
+        order: i + 1
+      });
+      updateProgress(`Foto ${i + 1} / ${state.fotos.length} subida`);
+    }
+
+    document.getElementById('ticketCode').textContent = state.ticketCode;
+    const waMsg = encodeURIComponent(`Hola, envío el ticket de mis fotos: ${state.ticketCode}`);
+    const waHref = WHATSAPP_NUMERO && WHATSAPP_NUMERO.indexOf('REEMPLAZAR') === -1
+      ? `https://wa.me/${WHATSAPP_NUMERO}?text=${waMsg}`
+      : '#';
+    document.getElementById('btnWhatsapp').href = waHref;
+    showScreen('screenTicket');
+  } catch (e) {
+    log.textContent = 'Error al subir: ' + (e && e.message ? e.message : String(e));
+    label.textContent = 'Ocurrió un error. Volvé a intentar.';
+  }
 });
 
-document.getElementById('closeDetailBtn').addEventListener('click', () => document.getElementById('detailPanel').classList.remove('open'));
-
-document.getElementById('list').addEventListener('keydown', (e) => {
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-  const visible = sortItems(state.items.filter(matchesFilters));
-  if (visible.length === 0) return;
-  let idx = visible.findIndex(i => i.id === state.selectedId);
-  if (e.key === 'ArrowDown') idx = Math.min(visible.length - 1, idx + 1);
-  else idx = Math.max(0, idx - 1);
-  e.preventDefault();
-  state.selectedId = visible[idx].id;
-  renderList();
-  renderDetail();
-  const row = document.querySelector(`.row[data-id="${state.selectedId}"]`);
-  if (row) row.scrollIntoView({ block: 'nearest' });
+document.getElementById('btnNuevoLote').addEventListener('click', () => {
+  state.fotos = [];
+  state.ubicacion = null;
+  state.loteId = null;
+  state.ticketCode = null;
+  document.getElementById('patenteInput').value = '';
+  showScreen('screenInicio');
 });
 
 window.addEventListener('beforeunload', () => {
-  for (const item of state.items) {
-    if (item.objectUrl) URL.revokeObjectURL(item.objectUrl);
-    if (item.thumbnailUrl) URL.revokeObjectURL(item.thumbnailUrl);
-  }
+  detenerCamara();
 });
 </script>
 </body>
