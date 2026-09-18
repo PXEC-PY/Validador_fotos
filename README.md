@@ -69,9 +69,11 @@ En el menú lateral, **Authentication > Sign-in method**, activá:
 
 En [firebase-config.js](firebase-config.js):
 
-- `WHATSAPP_NUMERO`: número de WhatsApp al que el cliente manda la captura del ticket,
-  en formato internacional sin `+` ni espacios (ej. `5491122334455`).
 - `MAX_FOTOS`: cuántas fotos como máximo puede sacar el cliente (por defecto 20).
+
+El botón "Enviar por WhatsApp" de la pantalla de ticket usa `wa.me` sin número fijo
+(`https://wa.me/?text=...`): abre WhatsApp y el cliente elige a quién mandárselo, así que
+no hace falta configurar ningún número acá.
 
 ## 6. Probar en local
 

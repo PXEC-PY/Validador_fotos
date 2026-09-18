@@ -33,10 +33,6 @@ export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// Número de WhatsApp al que el cliente debe enviar la captura del ticket.
-// Formato internacional sin "+" ni espacios, ej: "5491122334455".
-export const WHATSAPP_NUMERO = "REEMPLAZAR_NUMERO";
-
 // Máximo de fotos por lote.
 export const MAX_FOTOS = 20;
 

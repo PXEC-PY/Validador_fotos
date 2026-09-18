@@ -148,10 +148,10 @@
       <div class="actions">
         <a class="btn primary" id="btnWhatsapp" href="#" target="_blank" rel="noopener noreferrer" style="text-align:center; text-decoration:none;">Enviar por WhatsApp</a>
       </div>
-      <p style="margin-top:14px;">Tus fotos ya tienen el código QR del ticket marcado. Podés guardarlas para tu registro:</p>
+      <p style="margin-top:14px;">Tus fotos ya tienen el código QR del ticket marcado. Podés guardarlas o compartirlas (incluye WhatsApp):</p>
       <div class="actions">
         <button class="btn" id="btnDescargarZip" type="button">Descargar fotos (.zip)</button>
-        <button class="btn hidden" id="btnGuardarGaleria" type="button">Guardar en galería</button>
+        <button class="btn hidden" id="btnGuardarGaleria" type="button">Compartir / guardar fotos</button>
       </div>
       <div class="actions">
         <button class="btn" id="btnNuevoLote" type="button">Cargar otro vehículo</button>
@@ -168,7 +168,7 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script type="module">
-import { auth, db, WHATSAPP_NUMERO, MAX_FOTOS, MAX_FOTO_BYTES } from './firebase-config.js';
+import { auth, db, MAX_FOTOS, MAX_FOTO_BYTES } from './firebase-config.js';
 import { signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { collection, doc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
@@ -461,11 +461,10 @@ document.getElementById('btnFinalizar').addEventListener('click', async () => {
     }
 
     document.getElementById('ticketCode').textContent = state.ticketCode;
+    // Sin número fijo: wa.me sin destinatario abre WhatsApp y el cliente
+    // elige a quién mandárselo (no depende de configurar un número acá).
     const waMsg = encodeURIComponent(`Hola, envío el ticket de mis fotos: ${state.ticketCode}`);
-    const waHref = WHATSAPP_NUMERO && WHATSAPP_NUMERO.indexOf('REEMPLAZAR') === -1
-      ? `https://wa.me/${WHATSAPP_NUMERO}?text=${waMsg}`
-      : '#';
-    document.getElementById('btnWhatsapp').href = waHref;
+    document.getElementById('btnWhatsapp').href = `https://wa.me/?text=${waMsg}`;
 
     const btnGaleria = document.getElementById('btnGuardarGaleria');
     const archivosCompartibles = state.fotos.map((foto, idx) =>
@@ -473,7 +472,11 @@ document.getElementById('btnFinalizar').addEventListener('click', async () => {
     );
     if (navigator.canShare && navigator.canShare({ files: archivosCompartibles })) {
       btnGaleria.classList.remove('hidden');
-      btnGaleria.onclick = () => navigator.share({ files: archivosCompartibles, title: 'Fotos ' + state.ticketCode }).catch(() => {});
+      btnGaleria.onclick = () => navigator.share({
+        files: archivosCompartibles,
+        title: 'Fotos ' + state.ticketCode,
+        text: `Ticket ${state.ticketCode}`
+      }).catch(() => {});
     } else {
       btnGaleria.classList.add('hidden');
     }
