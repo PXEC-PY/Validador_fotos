@@ -9,7 +9,7 @@
 //  - A07: la sesión vive solo en esta pestaña (sessionStorage), el servidor la
 //    vence a los 30 min sin uso y acá se cierra también por inactividad.
 //  - Sin scripts inline (CSP estricta en admin.html).
-import { APPS_SCRIPT_URL } from './config.js';
+import { APPS_SCRIPT_URL } from './config.js?v=2';
 
 if (window.top !== window.self) {
   document.documentElement.style.display = 'none';

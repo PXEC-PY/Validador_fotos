@@ -10,7 +10,7 @@
 //  - El ticket y el token de subida los genera el servidor, no el navegador.
 import {
   APPS_SCRIPT_URL, MAX_FOTOS, FOTO_MAX_LADO, FOTO_CALIDAD_JPEG, FOTO_MAX_BYTES
-} from './config.js';
+} from './config.js?v=2';
 
 // Anti-clickjacking (GitHub Pages no permite enviar X-Frame-Options).
 if (window.top !== window.self) {
