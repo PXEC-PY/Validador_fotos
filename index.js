@@ -1,17 +1,16 @@
-// Flujo del broker/agente: datos -> GPS -> cámara -> subida -> ticket.
+// Flujo del broker/agente: datos -> GPS -> (crea lote) -> cámara -> subida -> ticket.
+//
+// Todo se guarda en la cuenta de Google propia (Drive + Planilla) vía el
+// Apps Script de apps-script/Codigo.gs. No hay Firebase ni Cloudinary.
 //
 // Seguridad (OWASP):
 //  - Sin scripts inline: la CSP de index.html no necesita 'unsafe-inline'.
 //  - Todo texto se pinta con textContent (nada de innerHTML con datos).
-//  - Entradas normalizadas y limitadas aquí Y validadas otra vez en
-//    firestore.rules (el cliente nunca es la única barrera).
-//  - Ticket generado con crypto.getRandomValues (no Math.random).
+//  - Entradas normalizadas acá Y validadas otra vez en el Apps Script.
+//  - El ticket y el token de subida los genera el servidor, no el navegador.
 import {
-  auth, db, MAX_FOTOS, CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET,
-  CLOUDINARY_URL_PREFIX, FOTO_MAX_LADO, FOTO_CALIDAD_JPEG, FOTO_MAX_BYTES
-} from './firebase-config.js';
-import { signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { collection, doc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+  APPS_SCRIPT_URL, MAX_FOTOS, FOTO_MAX_LADO, FOTO_CALIDAD_JPEG, FOTO_MAX_BYTES
+} from './config.js';
 
 // Anti-clickjacking (GitHub Pages no permite enviar X-Frame-Options).
 if (window.top !== window.self) {
@@ -20,7 +19,7 @@ if (window.top !== window.self) {
 }
 
 const $ = (id) => document.getElementById(id);
-const MAX_DISPAROS = 99; // el ID de cada foto en Firestore es de 2 dígitos
+const MAX_DISPAROS = 99; // el número de foto es de 2 dígitos (TICKET-NN)
 
 $('maxFotosLabel').textContent = String(MAX_FOTOS);
 $('fotoCounter').textContent = `0 / ${MAX_FOTOS}`;
@@ -33,8 +32,7 @@ const state = {
   nextShotNumber: 1,
   stream: null,
   imageCapture: null,
-  loteId: null,
-  loteCreado: false,
+  token: null,       // secreto de subida que entrega el servidor para este lote
   subidas: new Set(), // shotNumbers ya guardados (para reintentar sin duplicar)
   ticketCode: null,
   subiendo: false
@@ -132,12 +130,32 @@ function solicitarUbicacion() {
 }
 
 $('btnReintentarUbic').addEventListener('click', solicitarUbicacion);
-$('btnConfirmarUbic').addEventListener('click', () => {
+$('btnConfirmarUbic').addEventListener('click', async () => {
   if (!state.ubicacion) return;
-  if (!state.ticketCode) state.ticketCode = generarTicketCode();
-  $('ticketPreview').textContent = 'Ticket: ' + state.ticketCode;
-  showScreen('screenCamara');
-  iniciarCamara();
+  const btn = $('btnConfirmarUbic');
+  btn.disabled = true;
+  try {
+    if (!state.ticketCode) {
+      // El servidor crea el lote (con su propia fecha/hora) y entrega el
+      // ticket que se quema en el QR de cada foto.
+      textoUbic(null, 'Creando el ticket…');
+      const r = await llamarServidor({
+        accion: 'crearLote', agente: state.agente, patente: state.patente,
+        ubicacion: state.ubicacion, userAgent: navigator.userAgent.slice(0, 300)
+      });
+      if (!/^[A-HJKMNP-Z2-9]{6}$/.test(r.ticket) || !/^[a-f0-9]{64}$/.test(r.token)) throw new Error('respuesta_invalida');
+      state.ticketCode = r.ticket;
+      state.token = r.token;
+    }
+    $('ticketPreview').textContent = 'Ticket: ' + state.ticketCode;
+    showScreen('screenCamara');
+    iniciarCamara();
+  } catch (e) {
+    console.error(e);
+    textoUbic('bad', 'No pudimos crear el ticket: ' + mensajeError(e) + '. Revisá la conexión a internet y probá de nuevo.');
+  } finally {
+    btn.disabled = !state.ubicacion;
+  }
 });
 
 /* 3. Cámara (máxima calidad) -------------------------------------------- */
@@ -301,42 +319,54 @@ function detenerCamara() {
 
 /* 4. Subida ------------------------------------------------------------- */
 
-function generarTicketCode() {
-  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 31 símbolos, sin 0/O/1/I/L
-  const out = [];
-  const buf = new Uint8Array(1);
-  while (out.length < 6) {
-    crypto.getRandomValues(buf);
-    if (buf[0] < 248) out.push(chars[buf[0] % 31]); // 248 = 8*31: sin sesgo de módulo
-  }
-  return out.join('');
+const MENSAJES = {
+  sin_configurar: 'falta configurar la dirección del servidor',
+  agente_invalido: 'nombre de agente inválido',
+  ubicacion_invalida: 'ubicación inválida',
+  limite_alcanzado: 'se alcanzó el límite de lotes por hora, probá más tarde',
+  no_autorizado: 'el ticket no es válido',
+  lote_cerrado: 'el lote ya fue revisado',
+  lote_vencido: 'pasaron más de 2 horas desde que se creó el ticket; empezá un lote nuevo',
+  maximo_de_fotos: 'se alcanzó el máximo de fotos',
+  foto_muy_grande: 'la foto es demasiado grande',
+  no_es_jpeg: 'el archivo no es una foto válida'
+};
+const mensajeError = (e) => MENSAJES[e && e.message] || (e && e.message) || 'error desconocido';
+// Errores que no se arreglan reintentando.
+const DEFINITIVOS = new Set(['no_autorizado', 'lote_cerrado', 'lote_vencido', 'maximo_de_fotos', 'no_es_jpeg', 'foto_muy_grande', 'sin_configurar']);
+
+// POST al Apps Script. Se manda como text/plain para que sea un "pedido
+// simple" (sin preflight CORS, que Apps Script no soporta). Google responde
+// con una redirección a script.googleusercontent.com que el navegador sigue.
+function llamarServidor(cuerpo, onProgress) {
+  return new Promise((resolve, reject) => {
+    if (!APPS_SCRIPT_URL || !APPS_SCRIPT_URL.startsWith('https://script.google.com/')) {
+      return reject(new Error('sin_configurar'));
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', APPS_SCRIPT_URL);
+    xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
+    xhr.timeout = 300000;
+    if (onProgress) xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch (_) { /* abajo */ }
+      if (xhr.status !== 200 || !data) return reject(new Error('el servidor respondió ' + xhr.status));
+      if (!data.ok) return reject(new Error(String(data.error || 'error')));
+      resolve(data);
+    };
+    xhr.onerror = () => reject(new Error('error de red'));
+    xhr.ontimeout = () => reject(new Error('tiempo de espera agotado'));
+    xhr.send(JSON.stringify(cuerpo));
+  });
 }
 
-// Sube el original a Cloudinary (unsigned preset, sin secretos en el
-// cliente) con barra de progreso por foto.
-function subirACloudinary(blob, ticket, onProgress) {
+function blobABase64(blob) {
   return new Promise((resolve, reject) => {
-    const fd = new FormData();
-    fd.append('file', blob);
-    fd.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-    fd.append('tags', ticket);
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `https://api.cloudinary.com/v1_1/${encodeURIComponent(CLOUDINARY_CLOUD_NAME)}/image/upload`);
-    xhr.timeout = 180000;
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
-    xhr.onload = () => {
-      if (xhr.status < 200 || xhr.status >= 300) return reject(new Error('Cloudinary respondió ' + xhr.status));
-      try {
-        const data = JSON.parse(xhr.responseText);
-        if (typeof data.secure_url !== 'string' || !data.secure_url.startsWith(CLOUDINARY_URL_PREFIX)) {
-          return reject(new Error('Respuesta inesperada de Cloudinary'));
-        }
-        resolve(data);
-      } catch (e) { reject(e); }
-    };
-    xhr.onerror = () => reject(new Error('Error de red'));
-    xhr.ontimeout = () => reject(new Error('Tiempo de espera agotado'));
-    xhr.send(fd);
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
   });
 }
 
@@ -346,6 +376,7 @@ async function conReintentos(fn, intentos = 3) {
     try { return await fn(); }
     catch (e) {
       ultimoError = e;
+      if (DEFINITIVOS.has(e && e.message)) break;
       if (i < intentos) await new Promise(r => setTimeout(r, 2000 * i));
     }
   }
@@ -369,49 +400,27 @@ async function subirLote() {
   pintar(state.subidas.size);
 
   try {
-    if (!auth.currentUser) await signInAnonymously(auth);
-    const uid = auth.currentUser.uid;
-
-    if (!state.loteCreado) {
-      const loteRef = doc(collection(db, 'lotes'));
-      await setDoc(loteRef, {
-        ticketCode: state.ticketCode,
-        agente: state.agente,
-        patente: state.patente || null,
-        ubicacion: state.ubicacion,
-        status: 'pendiente',
-        fotoCount: state.fotos.length,
-        createdAt: serverTimestamp(),
-        creatorUid: uid,
-        userAgent: navigator.userAgent.slice(0, 400)
-      });
-      state.loteId = loteRef.id;
-      state.loteCreado = true;
-    }
-
     for (const foto of state.fotos) {
       if (state.subidas.has(foto.shotNumber)) continue;
       const hechas = state.subidas.size;
       log.textContent = `Subiendo foto ${hechas + 1} de ${total} (${(foto.blob.size / 1048576).toFixed(1)} MB)…`;
-      const data = await conReintentos(() => subirACloudinary(foto.blob, state.ticketCode, (p) => pintar(hechas, p)));
-      await conReintentos(() => setDoc(doc(db, 'lotes', state.loteId, 'fotos', nn(foto.shotNumber)), {
-        url: data.secure_url,
-        publicId: String(data.public_id || '').slice(0, 200),
-        capturedAt: foto.capturedAt,
-        order: foto.shotNumber,
-        width: Math.round(Number(data.width) || foto.width),
-        height: Math.round(Number(data.height) || foto.height),
-        bytes: Math.round(Number(data.bytes) || foto.blob.size),
-        fuente: foto.fuente
-      }));
+      const data = await blobABase64(foto.blob);
+      await conReintentos(() => llamarServidor({
+        accion: 'subirFoto', ticket: state.ticketCode, token: state.token,
+        nro: foto.shotNumber, capturedAt: foto.capturedAt,
+        width: foto.width, height: foto.height, fuente: foto.fuente, data
+      }, (p) => pintar(hechas, p)));
       state.subidas.add(foto.shotNumber);
       pintar(state.subidas.size);
     }
+    await conReintentos(() => llamarServidor({
+      accion: 'cerrarLote', ticket: state.ticketCode, token: state.token, fotoCount: state.fotos.length
+    }));
 
     mostrarTicket();
   } catch (e) {
     console.error(e);
-    log.textContent = 'Se cortó la subida (' + (e && e.message ? e.message : 'error desconocido') + '). Tus fotos siguen en este dispositivo.';
+    log.textContent = 'Se cortó la subida (' + mensajeError(e) + '). Tus fotos siguen en este dispositivo.';
     label.textContent = `${state.subidas.size} / ${total} subidas`;
     $('reintentarRow').classList.remove('hidden');
   } finally {
@@ -482,7 +491,7 @@ $('btnDescargarZip').addEventListener('click', async () => {
 $('btnNuevoLote').addEventListener('click', () => {
   state.fotos.forEach(f => URL.revokeObjectURL(f.objectUrl));
   Object.assign(state, {
-    fotos: [], ubicacion: null, loteId: null, loteCreado: false, subidas: new Set(),
+    fotos: [], ubicacion: null, token: null, subidas: new Set(),
     ticketCode: null, nextShotNumber: 1, patente: ''
   });
   $('patenteInput').value = '';

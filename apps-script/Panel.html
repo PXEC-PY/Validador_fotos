@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+<head>
+<base target="_blank">
+<meta charset="utf-8">
+<style>
+  body{font-family:Arial,sans-serif; font-size:13px; color:#1b2420; margin:10px;}
+  h2{font-family:Consolas,monospace; font-size:20px; margin:0 0 4px;}
+  .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:bold; border:1px solid;}
+  .pendiente{color:#8a6d1a; background:#fbf3d8; border-color:#d1a53d;}
+  .aprobado{color:#0f6632; background:#e1f0e7; border-color:#0f6632;}
+  .rechazado{color:#a02a2a; background:#fbe0e0; border-color:#dd5b5b;}
+  table{width:100%; border-collapse:collapse; margin:8px 0;}
+  td{padding:3px 2px; border-bottom:1px solid #e6e9e6; vertical-align:top; font-size:12px;}
+  td:first-child{color:#828d86; width:40%;}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:6px;}
+  .grid a{display:block; border:1px solid #d6dbd7; border-radius:4px; overflow:hidden; text-decoration:none; color:#525d56;}
+  .grid img{width:100%; aspect-ratio:3/4; object-fit:cover; display:block; background:#eef2ef;}
+  .grid span{display:block; font-size:10px; padding:2px 4px; font-family:Consolas,monospace;}
+  textarea{width:100%; box-sizing:border-box; min-height:50px; margin-top:8px;}
+  .row{display:flex; gap:6px; margin-top:6px;}
+  button{flex:1; padding:8px; border-radius:4px; border:1px solid #d6dbd7; cursor:pointer; font-weight:bold;}
+  .ok{background:#0f6632; color:#fff; border-color:#0f6632;}
+  .no{background:#fff; color:#a02a2a; border-color:#dd5b5b;}
+  .muted{color:#828d86; font-size:12px;}
+  .warn{color:#9a5217; font-size:12px; margin:6px 0;}
+</style>
+</head>
+<body>
+<div id="app" class="muted">Cargando…</div>
+<div class="row"><button type="button" id="recargar">Ver lote de la fila seleccionada</button></div>
+
+<script>
+  // Todo dato del lote viene de un broker: se pinta SIEMPRE con textContent.
+  var actual = null;
+  function el(tag, attrs, text) {
+    var e = document.createElement(tag);
+    if (attrs) for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = String(text);
+    return e;
+  }
+  function fila(t, k, v) { var tr = el('tr'); tr.appendChild(el('td', null, k)); tr.appendChild(el('td', null, v === '' || v == null ? '—' : v)); t.appendChild(tr); }
+  function idValido(id) { return /^[A-Za-z0-9_-]{10,}$/.test(String(id)); }
+
+  function pintar(lote) {
+    var app = document.getElementById('app');
+    app.replaceChildren(); app.className = '';
+    if (!lote || lote.error) { app.className = 'muted'; app.textContent = lote ? lote.error : 'Sin datos.'; return; }
+    actual = lote;
+    app.appendChild(el('h2', null, lote.ticket));
+    var estado = ['pendiente', 'aprobado', 'rechazado'].indexOf(lote.estado) >= 0 ? lote.estado : 'pendiente';
+    app.appendChild(el('span', { 'class': 'badge ' + estado }, estado));
+
+    var t = el('table');
+    fila(t, 'Agente / broker', lote.agente);
+    fila(t, 'Patente', lote.patente);
+    fila(t, 'Creado', lote.creado);
+    fila(t, 'Fotos', lote.fotosRecibidas + (lote.fotosDeclaradas ? ' de ' + lote.fotosDeclaradas : ''));
+    fila(t, 'Ubicación', lote.lat + ', ' + lote.lng + ' (±' + lote.precisionM + ' m)');
+    fila(t, 'Revisado', lote.revisadoAt ? lote.revisadoAt + ' · ' + lote.revisadoPor : '');
+    app.appendChild(t);
+
+    if (lote.fotosDeclaradas && Number(lote.fotosRecibidas) < Number(lote.fotosDeclaradas)) {
+      app.appendChild(el('div', { 'class': 'warn' }, '⚠ Faltan fotos: el celular declaró ' + lote.fotosDeclaradas + ' y llegaron ' + lote.fotosRecibidas + '.'));
+    }
+
+    var links = el('div', { 'class': 'row' });
+    var lat = Number(lote.lat), lng = Number(lote.lng);
+    if (isFinite(lat) && isFinite(lng)) {
+      var m = el('a', { href: 'https://www.google.com/maps?q=' + lat + ',' + lng, rel: 'noopener noreferrer' }, 'Ver en el mapa');
+      links.appendChild(m);
+    }
+    if (/^https:\/\/drive\.google\.com\//.test(String(lote.carpeta))) {
+      links.appendChild(el('span', null, ' · '));
+      links.appendChild(el('a', { href: lote.carpeta, rel: 'noopener noreferrer' }, 'Abrir carpeta (descargar ZIP)'));
+    }
+    app.appendChild(links);
+
+    var grid = el('div', { 'class': 'grid' });
+    grid.style.marginTop = '10px';
+    lote.fotos.forEach(function (f) {
+      if (!idValido(f.archivoId)) return;
+      var a = el('a', { href: 'https://drive.google.com/file/d/' + f.archivoId + '/view', rel: 'noopener noreferrer' });
+      a.appendChild(el('img', { src: 'https://drive.google.com/thumbnail?id=' + f.archivoId + '&sz=w400', alt: 'Foto ' + f.nro, loading: 'lazy' }));
+      a.appendChild(el('span', null, '#' + f.nro + ' · ' + (f.ancho && f.alto ? f.ancho + '×' + f.alto : '') + ' · ' + (Number(f.bytes) / 1048576).toFixed(1) + ' MB'));
+      grid.appendChild(a);
+    });
+    app.appendChild(grid);
+
+    var nota = el('textarea', { placeholder: 'Nota (ej. motivo de rechazo)', maxlength: '1000', id: 'nota' });
+    nota.value = lote.nota || '';
+    app.appendChild(nota);
+    var acciones = el('div', { 'class': 'row' });
+    var ok = el('button', { type: 'button', 'class': 'ok' }, 'Aprobar');
+    var no = el('button', { type: 'button', 'class': 'no' }, 'Rechazar');
+    ok.onclick = function () { revisar('aprobado'); };
+    no.onclick = function () { revisar('rechazado'); };
+    acciones.appendChild(ok); acciones.appendChild(no);
+    app.appendChild(acciones);
+  }
+
+  function revisar(estado) {
+    if (!actual) return;
+    var nota = document.getElementById('nota').value;
+    document.getElementById('app').className = 'muted';
+    google.script.run.withSuccessHandler(pintar).withFailureHandler(error).revisarLote(actual.nroFila, estado, nota);
+  }
+  function error(e) { pintar({ error: 'Error: ' + (e && e.message ? e.message : e) }); }
+  function cargar() {
+    document.getElementById('app').textContent = 'Cargando…';
+    google.script.run.withSuccessHandler(pintar).withFailureHandler(error).datosLoteSeleccionado();
+  }
+  document.getElementById('recargar').onclick = cargar;
+  cargar();
+</script>
+</body>
+</html>
