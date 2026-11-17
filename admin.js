@@ -463,12 +463,14 @@ async function verOriginal(ticket, nro) {
   try {
     const blob = await bajarOriginal(ticket, nro);
     if (!vista || vista.ticket !== ticket || vista.nro !== nro) return; // ya cambió de foto
+    const integridad = await verificarIntegridad(ticket, nro, blob);
+    if (!vista || vista.ticket !== ticket || vista.nro !== nro) return;
     if (urlOriginal) URL.revokeObjectURL(urlOriginal);
     urlOriginal = URL.createObjectURL(blob);
     const img = document.createElement('img');
     img.src = urlOriginal; img.alt = 'Original';
     img.addEventListener('load', () => {
-      if (vista && vista.nro === nro) $('fotoModalTitulo').textContent = `${ticket}-${nn(nro)} · ${img.naturalWidth}×${img.naturalHeight} · ${(blob.size / 1048576).toFixed(1)} MB`;
+      if (vista && vista.nro === nro) $('fotoModalTitulo').textContent = `${ticket}-${nn(nro)} · ${img.naturalWidth}×${img.naturalHeight} · ${(blob.size / 1048576).toFixed(1)} MB · ${integridad}`;
     });
     cuerpo.replaceChildren(img);
     desc.href = urlOriginal;
@@ -479,6 +481,22 @@ async function verOriginal(ticket, nro) {
     if (sig !== undefined) bajarOriginal(ticket, sig).catch(() => {});
   } catch (e) {
     if (vista && vista.nro === nro) cuerpo.innerHTML = `<p class="error-msg" style="color:var(--red);">${msg(e)}</p>`;
+  }
+}
+
+// Recalcula el SHA-256 del original descargado y lo compara con la huella
+// que mandó el celular al sacar la foto (cadena de custodia).
+async function verificarIntegridad(ticket, nro, blob) {
+  const lote = memLote.get(ticket);
+  const f = lote && (lote.fotos || []).find(x => num(x.nro) === nro);
+  const esperado = f && /^[a-f0-9]{64}$/.test(String(f.sha256 || '')) ? f.sha256 : '';
+  if (!esperado) return 'sin huella registrada';
+  try {
+    const h = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+    const real = [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+    return real === esperado ? '✓ íntegra (SHA-256 coincide)' : '⚠ NO coincide con la huella original';
+  } catch (_) {
+    return 'no se pudo verificar';
   }
 }
 

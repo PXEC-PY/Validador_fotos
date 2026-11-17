@@ -393,6 +393,17 @@ function llamarServidor(cuerpo) {
   });
 }
 
+// Huella SHA-256 de la foto (cadena de custodia). Se calcula acá porque en el
+// celular tarda milisegundos y en Apps Script varios segundos.
+async function sha256Hex(blob) {
+  try {
+    const h = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+    return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (_) {
+    return '';
+  }
+}
+
 function blobABase64(blob) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -440,10 +451,11 @@ async function subirUna(foto, gen) {
   try {
     const data = await blobABase64(foto.blob);
     const mini = foto.mini ? await blobABase64(foto.mini) : '';
+    if (!foto.sha256) foto.sha256 = await sha256Hex(foto.blob);
     await llamarServidor({
       accion: 'subirFoto', ticket: state.ticketCode, token: state.token,
       nro: foto.shotNumber, capturedAt: foto.capturedAt,
-      width: foto.width, height: foto.height, fuente: foto.fuente, data, mini
+      width: foto.width, height: foto.height, fuente: foto.fuente, data, mini, sha256: foto.sha256
     });
     if (gen !== generacion) return;
     foto.estado = 'ok';

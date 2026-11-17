@@ -134,24 +134,29 @@ function crearLote_(b) {
 }
 
 function subirFoto_(b) {
+  const t0 = Date.now(), t = {};
   const lote = loteAutorizado_(b);
+  t.auth = Date.now() - t0;
   const nro = Number(b.nro);
   if (!Number.isInteger(nro) || nro < 1 || nro > CONFIG.MAX_NRO_FOTO) throw publico_('nro_invalido');
   if (typeof b.data !== 'string' || b.data.length < 100) throw publico_('foto_invalida');
 
-  const bytes = Utilities.base64Decode(b.data);
-  if (bytes.length > CONFIG.MAX_BYTES_FOTO) throw publico_('foto_muy_grande');
-  if (!esJpeg_(bytes)) throw publico_('no_es_jpeg');
-  // Miniatura opcional (la genera el celular) para previsualizar rápido en el admin.
-  let mini = null;
-  if (typeof b.mini === 'string' && b.mini.length > 100 && b.mini.length < 600000) {
-    const mb = Utilities.base64Decode(b.mini);
-    if (esJpeg_(mb)) mini = mb;
-  }
+  // Validaciones sin decodificar toda la foto (en Apps Script decodificar
+  // varios MB a un arreglo es lo más lento): tamaño por el largo del base64,
+  // y firma JPEG mirando solo el principio (FF D8 FF) y el final (FF D9).
+  if (largoBase64_(b.data) > CONFIG.MAX_BYTES_FOTO) throw publico_('foto_muy_grande');
+  if (!pareceJpegB64_(b.data)) throw publico_('no_es_jpeg');
+  let miniB64 = '';
+  if (typeof b.mini === 'string' && b.mini.length > 100 && b.mini.length < 600000 && pareceJpegB64_(b.mini)) miniB64 = b.mini;
+  // Huella SHA-256 calculada en el celular (instantáneo allá, lentísimo acá).
+  // El panel admin la vuelve a calcular al abrir el original y avisa si no coincide.
+  const sha = /^[a-f0-9]{64}$/.test(String(b.sha256 || '')) ? String(b.sha256) : '';
+  const tamanio = largoBase64_(b.data);
 
   const nombre = `${lote.ticket}-${String(nro).padStart(2, '0')}.jpg`;
   const carpeta = DriveApp.getFolderById(idDeCarpeta_(lote.fila.carpeta));
   const cache = CacheService.getScriptCache();
+  t.carpeta = Date.now() - t0;
   const kProc = 'proc_' + lote.ticket + '_' + nro;
   const kPend = 'pend_' + lote.ticket;
   const lock = LockService.getScriptLock();
@@ -166,20 +171,25 @@ function subirFoto_(b) {
     const pendientes = Number(cache.get(kPend) || 0);
     if (recibidas + pendientes >= CONFIG.MAX_FOTOS) throw publico_('maximo_de_fotos');
     const uso = usoHoy_();
-    if (uso.bytes + bytes.length > CONFIG.MAX_GB_POR_DIA * 1024 * 1024 * 1024) throw publico_('limite_diario');
+    if (uso.bytes + tamanio > CONFIG.MAX_GB_POR_DIA * 1024 * 1024 * 1024) throw publico_('limite_diario');
     cache.put(kProc, '1', 300);
     cache.put(kPend, String(pendientes + 1), 300);
   } finally {
     lock.releaseLock();
   }
 
+  t.reserva = Date.now() - t0;
+
   // Paso 2 (sin lock): guardar en Drive. Así dos fotos se guardan a la vez.
-  let archivo = null, miniId = '', sha = '';
+  let archivo = null, miniId = '';
   try {
-    archivo = carpeta.createFile(Utilities.newBlob(bytes, 'image/jpeg', nombre));
+    const blob = Utilities.newBlob(Utilities.base64Decode(b.data), 'image/jpeg', nombre); // única conversión
+    t.decodificar = Date.now() - t0;
+    archivo = carpeta.createFile(blob);
     archivo.setDescription(`Ticket ${lote.ticket} · foto ${nro} · ${lote.fila.agente}`);
-    sha = hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes));
-    miniId = mini ? subcarpeta_(carpeta, 'miniaturas').createFile(Utilities.newBlob(mini, 'image/jpeg', nombre)).getId() : '';
+    t.drive = Date.now() - t0;
+    if (miniB64) miniId = carpetaMinis_(lote.ticket, carpeta).createFile(Utilities.newBlob(Utilities.base64Decode(miniB64), 'image/jpeg', nombre)).getId();
+    t.mini = Date.now() - t0;
   } catch (err) {
     liberarReserva_(kProc, kPend);
     throw err;
@@ -190,24 +200,49 @@ function subirFoto_(b) {
   try {
     const capt = Number(b.capturedAt);
     hoja_(HOJA_FOTOS).appendRow(fila_(COL_FOTOS, {
-      ticket: lote.ticket, nro, archivo: archivo.getUrl(), bytes: bytes.length,
+      ticket: lote.ticket, nro, archivo: archivo.getUrl(), bytes: tamanio,
       ancho: entero_(b.width), alto: entero_(b.height), fuente: seguroCelda_(texto_(b.fuente, 10)),
       capturadaCelular: capt > 0 ? new Date(capt) : '', recibida: new Date(), sha256: sha,
       archivoId: archivo.getId(), miniId
     }));
     const celda = lote.hoja.getRange(lote.nroFila, COL_LOTES.indexOf('fotosRecibidas') + 1);
     celda.setValue((Number(celda.getValue()) || 0) + 1);
-    if (mini && b.mini.length <= MAX_CACHE_VALOR) {
-      try { cache.put(claveMini_(lote.ticket, nro), b.mini, CACHE_MINI_S); } catch (_) { /* no crítico */ }
+    if (miniB64 && miniB64.length <= MAX_CACHE_VALOR) {
+      try { cache.put(claveMini_(lote.ticket, nro), miniB64, CACHE_MINI_S); } catch (_) { /* no crítico */ }
     }
     const uso = usoHoy_();
-    uso.bytes += bytes.length + (mini ? mini.length : 0);
+    uso.bytes += tamanio + (miniB64 ? largoBase64_(miniB64) : 0);
     guardarUso_(uso);
   } finally {
     liberarReservaSinLock_(kProc, kPend);
     lock.releaseLock();
   }
-  return { ok: true };
+  t.total = Date.now() - t0;
+  return { ok: true, t: t }; // tiempos por paso (ms), para medir rendimiento
+}
+
+// Bytes reales de un base64 sin decodificarlo.
+function largoBase64_(s) {
+  const pad = s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0;
+  return Math.floor(s.length * 3 / 4) - pad;
+}
+
+// JPEG: empieza con FF D8 FF ("/9j/" en base64) y termina con FF D9.
+function pareceJpegB64_(s) {
+  if (!/^\/9j\//.test(s) || s.length % 4 !== 0) return false;
+  const fin = Utilities.base64Decode(s.slice(-8));
+  return (fin[fin.length - 2] & 0xff) === 0xff && (fin[fin.length - 1] & 0xff) === 0xd9;
+}
+
+// Carpeta "miniaturas" del lote (se recuerda para no buscarla en cada foto).
+function carpetaMinis_(ticket, carpeta) {
+  const cache = CacheService.getScriptCache();
+  const k = 'dirmini_' + ticket;
+  const id = cache.get(k);
+  if (id) { try { return DriveApp.getFolderById(id); } catch (_) { /* se busca */ } }
+  const d = subcarpeta_(carpeta, 'miniaturas');
+  cache.put(k, d.getId(), CACHE_MINI_S);
+  return d;
 }
 
 function liberarReservaSinLock_(kProc, kPend) {
@@ -272,9 +307,18 @@ function loteAutorizado_(b) {
   const token = String(b.token || '');
   if (!/^[A-HJKMNP-Z2-9]{6}$/.test(ticket) || !/^[a-f0-9]{64}$/.test(token)) throw publico_('no_autorizado');
   const hoja = hoja_(HOJA_LOTES);
-  const nroFila = buscarFila_(hoja, ticket);
-  if (!nroFila) throw publico_('no_autorizado');
-  const valores = hoja.getRange(nroFila, 1, 1, COL_LOTES.length).getValues()[0];
+  const cache = CacheService.getScriptCache();
+  const kFila = 'fila_' + ticket;
+  // Fila recordada (verificada leyendo el ticket de esa fila: si alguien
+  // borró filas a mano en la planilla, se vuelve a buscar).
+  let nroFila = Number(cache.get(kFila) || 0);
+  let valores = nroFila ? hoja.getRange(nroFila, 1, 1, COL_LOTES.length).getValues()[0] : null;
+  if (!valores || valores[0] !== ticket) {
+    nroFila = buscarFila_(hoja, ticket);
+    if (!nroFila) throw publico_('no_autorizado');
+    valores = hoja.getRange(nroFila, 1, 1, COL_LOTES.length).getValues()[0];
+    cache.put(kFila, String(nroFila), 21600);
+  }
   const fila = {};
   COL_LOTES.forEach((k, i) => { fila[k] = valores[i]; });
   if (!igualSeguro_(String(fila.tokenHash), sha256_(token))) throw publico_('no_autorizado');
