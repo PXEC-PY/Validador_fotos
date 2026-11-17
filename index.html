@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src https://script.google.com https://script.googleusercontent.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src https://script.google.com https://script.googleusercontent.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Validador de fotografías — La Meridional Paraguaya S.A. de Seguros</title>
 <link rel="icon" href="logo.png">
@@ -16,6 +16,11 @@
 .screen p{font-size:13px; color:var(--text-dim); margin:6px 0;}
 .field{margin:16px 0;}
 .field label{display:block; font-size:12.5px; color:var(--text-dim); margin-bottom:5px;}
+.field textarea{
+  width:100%; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  padding:10px 12px; color:var(--text); font:inherit; resize:vertical; min-height:64px;
+}
+.field input[type="text"], .field textarea{font-size:16px;} /* 16px: evita el zoom automático de iPhone */
 .field input[type="text"]{
   width:100%; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
   padding:10px 12px; color:var(--text);
@@ -49,6 +54,15 @@
 .thumb-strip{display:flex; flex-wrap:wrap; gap:8px; margin:10px 0;}
 .thumb{position:relative; width:64px; height:64px; border-radius:4px; overflow:hidden; border:1px solid var(--border);}
 .thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+.thumb__estado{
+  position:absolute; left:2px; bottom:2px; min-width:16px; height:16px; border-radius:8px; padding:0 4px;
+  font-size:10px; line-height:16px; text-align:center; color:#fff; background:rgba(20,20,20,.7);
+}
+.thumb__estado--ok{background:var(--green);}
+.thumb__estado--error{background:var(--red);}
+.thumb__estado--subiendo, .thumb__estado--cola, .thumb__estado--espera{animation:latido 1.2s ease-in-out infinite;}
+@keyframes latido{50%{opacity:.45;}}
+.estado-subida{font-size:12px; color:var(--text-dim); margin:4px 0 0; min-height:1em;}
 .thumb button{
   position:absolute; top:2px; right:2px; width:18px; height:18px; border-radius:50%;
   background:rgba(20,20,20,.75); color:#fff; border:none; font-size:11px; line-height:1; cursor:pointer;
@@ -103,8 +117,12 @@
         <input type="text" id="patenteInput" placeholder="Ej.: chapa ABC 123 · local Av. España 1234" autocomplete="off" maxlength="60">
         <div style="font-size:11.5px; color:var(--text-faint); margin-top:4px;">Opcional: algo que lo identifique (chapa del vehículo, dirección del local, n.º de póliza…).</div>
       </div>
+      <div class="field">
+        <label for="descripcionInput">Descripción (opcional)</label>
+        <textarea id="descripcionInput" rows="3" maxlength="300" placeholder="Ej.: rayón en la puerta trasera izquierda, local con vidriera nueva…"></textarea>
+      </div>
       <div id="inicioError" class="error-msg"></div>
-      <p style="font-size:12px;">Las fotos se guardan en máxima calidad (resolución completa de la cámara). Con datos móviles la subida puede tardar unos minutos: conviene usar Wi-Fi.</p>
+      <p style="font-size:12px;">Las fotos se guardan en máxima calidad (resolución completa de la cámara) y se van subiendo solas mientras sacás las siguientes. Con datos móviles puede tardar un poco más: si podés, usá Wi-Fi.</p>
       <div class="actions">
         <button class="btn primary" id="btnComenzar" type="button">Comenzar</button>
       </div>
@@ -124,7 +142,7 @@
     <!-- 3. Cámara -->
     <section class="screen" id="screenCamara">
       <h1>Tomá las fotografías</h1>
-      <p>Sacá fotos desde distintos ángulos (frente, laterales, fondo, detalles y daños si los hay). Podés borrar y repetir una foto puntual antes de subir el lote. Cada foto queda marcada con un código QR que identifica el ticket, la fecha/hora y la ubicación reales.</p>
+      <p>Sacá fotos desde distintos ángulos (frente, laterales, fondo, detalles y daños si los hay). Cada foto se va subiendo sola mientras sacás las siguientes. Podés borrar y repetir una foto puntual antes de subir el lote. Cada foto queda marcada con un código QR que identifica el ticket, la fecha/hora y la ubicación reales.</p>
       <div class="ticket-preview mono" id="ticketPreview"></div>
       <div class="camera-box">
         <video id="video" autoplay playsinline muted></video>
@@ -135,6 +153,7 @@
         <button class="shutter-btn" id="btnDisparar" type="button" aria-label="Tomar foto"></button>
       </div>
       <div class="thumb-strip" id="thumbStrip"></div>
+      <p class="estado-subida" id="estadoSubida" aria-live="polite"></p>
       <div class="actions">
         <button class="btn primary" id="btnFinalizar" type="button" disabled>Finalizar y subir</button>
       </div>

@@ -13,9 +13,10 @@ export const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4Y1ujP
 export const MAX_FOTOS = 20;
 
 // Calidad de captura: resolución nativa de la cámara hasta 4096 px de lado
-// mayor (tope seguro de canvas en iPhone) y JPEG 0.95.
+// mayor (tope seguro de canvas en iPhone). JPEG 0.92: visualmente igual a
+// 0.95 pero ~30% más liviano (sube bastante más rápido con datos móviles).
 export const FOTO_MAX_LADO = 4096;
-export const FOTO_CALIDAD_JPEG = 0.95;
+export const FOTO_CALIDAD_JPEG = 0.92;
 // Si una foto pasa este peso se re-codifica un poco más comprimida
 // (Codigo.gs acepta hasta 15 MB).
 export const FOTO_MAX_BYTES = 12 * 1024 * 1024;

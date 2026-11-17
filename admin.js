@@ -303,6 +303,7 @@ function pintarDetalle(lote) {
       <table class="kv">
         <tr><td>Nombre / agencia</td><td>${esc(lote.agente || '—')}</td></tr>
         <tr><td>Referencia</td><td>${esc(lote.patente || '—')}</td></tr>
+        <tr><td>Descripción</td><td style="font-family:var(--sans); white-space:pre-wrap;">${esc(lote.descripcion || '—')}</td></tr>
         <tr><td>Creado (hora del servidor)</td><td>${esc(fmt(lote.creado))}</td></tr>
         <tr><td>Fotos</td><td>${esc(fotos.length)}${totalBytes ? ' · ' + esc((totalBytes / 1048576).toFixed(1)) + ' MB' : ''}</td></tr>
         <tr><td>Navegador</td><td style="font-size:10.5px;">${esc(lote.userAgent || '—')}</td></tr>

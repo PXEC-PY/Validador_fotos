@@ -44,7 +44,7 @@ const HOJA_LOTES = 'Lotes';
 const HOJA_FOTOS = 'Fotos';
 const COL_LOTES = ['ticket', 'estado', 'agente', 'patente', 'fotosRecibidas', 'fotosDeclaradas',
   'creado', 'cerrado', 'lat', 'lng', 'precisionM', 'gpsCapturado', 'carpeta', 'nota',
-  'revisadoPor', 'revisadoAt', 'userAgent', 'tokenHash'];
+  'revisadoPor', 'revisadoAt', 'userAgent', 'tokenHash', 'descripcion'];
 const COL_FOTOS = ['ticket', 'nro', 'archivo', 'bytes', 'ancho', 'alto', 'fuente',
   'capturadaCelular', 'recibida', 'sha256', 'archivoId', 'miniId'];
 
@@ -65,6 +65,7 @@ function doPost(e) {
       case 'crearLote': return json_(crearLote_(body));
       case 'subirFoto': return json_(subirFoto_(body));
       case 'cerrarLote': return json_(cerrarLote_(body));
+      case 'borrarFoto': return json_(borrarFoto_(body));
       // Panel admin web: todas (salvo el login) exigen sesión válida.
       case 'adminLogin': return json_(adminLogin_(body));
       case 'adminLogout': return json_(adminLogout_(body));
@@ -90,6 +91,7 @@ function crearLote_(b) {
   if (agente.length < 2) throw publico_('agente_invalido');
   // "patente" = referencia libre del bien (chapa, dirección, póliza…).
   const patente = texto_(b.patente, 60).replace(/[^\p{L}\p{N} .,:;#/°ºª()+-]/gu, '');
+  const descripcion = texto_(b.descripcion, 300);
   const u = b.ubicacion || {};
   const lat = Number(u.lat), lng = Number(u.lng), acc = Number(u.accuracy), gpsAt = Number(u.capturedAt);
   if (!(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 && acc >= 0 && acc < 100000)) throw publico_('ubicacion_invalida');
@@ -110,6 +112,7 @@ function crearLote_(b) {
     const uso = usoHoy_();
     if (uso.lotes >= CONFIG.MAX_LOTES_POR_DIA) throw publico_('limite_diario');
     const hoja = hoja_(HOJA_LOTES);
+    asegurarEncabezados_();
     do { ticket = generarTicket_(); } while (buscarFila_(hoja, ticket));
     const carpeta = carpetaLote_(ticket, ahora);
     hoja.appendRow(fila_(COL_LOTES, {
@@ -118,7 +121,8 @@ function crearLote_(b) {
       lat, lng, precisionM: Math.round(acc),
       gpsCapturado: gpsAt > 0 ? new Date(gpsAt) : '',
       carpeta: carpeta.getUrl(), nota: '', revisadoPor: '', revisadoAt: '',
-      userAgent: seguroCelda_(texto_(b.userAgent, 300)), tokenHash: sha256_(token)
+      userAgent: seguroCelda_(texto_(b.userAgent, 300)), tokenHash: sha256_(token),
+      descripcion: seguroCelda_(descripcion)
     }));
     uso.lotes++;
     guardarUso_(uso);
@@ -147,22 +151,43 @@ function subirFoto_(b) {
 
   const nombre = `${lote.ticket}-${String(nro).padStart(2, '0')}.jpg`;
   const carpeta = DriveApp.getFolderById(idDeCarpeta_(lote.fila.carpeta));
-
+  const cache = CacheService.getScriptCache();
+  const kProc = 'proc_' + lote.ticket + '_' + nro;
+  const kPend = 'pend_' + lote.ticket;
   const lock = LockService.getScriptLock();
+
+  // Paso 1 (con lock, rápido): controles y reserva del lugar.
   lock.waitLock(25000);
   try {
     // Idempotente: si el celular reintenta una foto que ya llegó, no se duplica.
     if (carpeta.getFilesByName(nombre).hasNext()) return { ok: true, duplicada: true };
-    const celdaRecibidas = lote.hoja.getRange(lote.nroFila, COL_LOTES.indexOf('fotosRecibidas') + 1);
-    const recibidas = Number(celdaRecibidas.getValue()) || 0;
-    if (recibidas >= CONFIG.MAX_FOTOS) throw publico_('maximo_de_fotos');
+    if (cache.get(kProc)) throw publico_('en_proceso'); // el mismo número se está guardando
+    const recibidas = Number(lote.hoja.getRange(lote.nroFila, COL_LOTES.indexOf('fotosRecibidas') + 1).getValue()) || 0;
+    const pendientes = Number(cache.get(kPend) || 0);
+    if (recibidas + pendientes >= CONFIG.MAX_FOTOS) throw publico_('maximo_de_fotos');
     const uso = usoHoy_();
     if (uso.bytes + bytes.length > CONFIG.MAX_GB_POR_DIA * 1024 * 1024 * 1024) throw publico_('limite_diario');
+    cache.put(kProc, '1', 300);
+    cache.put(kPend, String(pendientes + 1), 300);
+  } finally {
+    lock.releaseLock();
+  }
 
-    const archivo = carpeta.createFile(Utilities.newBlob(bytes, 'image/jpeg', nombre));
-    archivo.setDescription(`Ticket ${lote.ticket} · foto ${nro} · agente ${lote.fila.agente}`);
-    const sha = hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes));
-    const miniId = mini ? subcarpeta_(carpeta, 'miniaturas').createFile(Utilities.newBlob(mini, 'image/jpeg', nombre)).getId() : '';
+  // Paso 2 (sin lock): guardar en Drive. Así dos fotos se guardan a la vez.
+  let archivo = null, miniId = '', sha = '';
+  try {
+    archivo = carpeta.createFile(Utilities.newBlob(bytes, 'image/jpeg', nombre));
+    archivo.setDescription(`Ticket ${lote.ticket} · foto ${nro} · ${lote.fila.agente}`);
+    sha = hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes));
+    miniId = mini ? subcarpeta_(carpeta, 'miniaturas').createFile(Utilities.newBlob(mini, 'image/jpeg', nombre)).getId() : '';
+  } catch (err) {
+    liberarReserva_(kProc, kPend);
+    throw err;
+  }
+
+  // Paso 3 (con lock, rápido): registrar en la planilla y contadores.
+  lock.waitLock(25000);
+  try {
     const capt = Number(b.capturedAt);
     hoja_(HOJA_FOTOS).appendRow(fila_(COL_FOTOS, {
       ticket: lote.ticket, nro, archivo: archivo.getUrl(), bytes: bytes.length,
@@ -170,12 +195,61 @@ function subirFoto_(b) {
       capturadaCelular: capt > 0 ? new Date(capt) : '', recibida: new Date(), sha256: sha,
       archivoId: archivo.getId(), miniId
     }));
-    celdaRecibidas.setValue(recibidas + 1);
+    const celda = lote.hoja.getRange(lote.nroFila, COL_LOTES.indexOf('fotosRecibidas') + 1);
+    celda.setValue((Number(celda.getValue()) || 0) + 1);
     if (mini && b.mini.length <= MAX_CACHE_VALOR) {
-      try { CacheService.getScriptCache().put(claveMini_(lote.ticket, nro), b.mini, CACHE_MINI_S); } catch (_) { /* no crítico */ }
+      try { cache.put(claveMini_(lote.ticket, nro), b.mini, CACHE_MINI_S); } catch (_) { /* no crítico */ }
     }
+    const uso = usoHoy_();
     uso.bytes += bytes.length + (mini ? mini.length : 0);
     guardarUso_(uso);
+  } finally {
+    liberarReservaSinLock_(kProc, kPend);
+    lock.releaseLock();
+  }
+  return { ok: true };
+}
+
+function liberarReservaSinLock_(kProc, kPend) {
+  const cache = CacheService.getScriptCache();
+  cache.remove(kProc);
+  const n = Number(cache.get(kPend) || 0);
+  if (n > 1) cache.put(kPend, String(n - 1), 300); else cache.remove(kPend);
+}
+
+function liberarReserva_(kProc, kPend) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  try { liberarReservaSinLock_(kProc, kPend); } finally { lock.releaseLock(); }
+}
+
+// El broker borró una foto que ya se había subido (mientras el lote sigue
+// pendiente). Se manda a la papelera de Drive y se quita de la planilla.
+function borrarFoto_(b) {
+  const lote = loteAutorizado_(b);
+  const nro = Number(b.nro);
+  if (!Number.isInteger(nro) || nro < 1 || nro > CONFIG.MAX_NRO_FOTO) throw publico_('nro_invalido');
+  const nombre = `${lote.ticket}-${String(nro).padStart(2, '0')}.jpg`;
+  const carpeta = DriveApp.getFolderById(idDeCarpeta_(lote.fila.carpeta));
+  const lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  try {
+    const it = carpeta.getFilesByName(nombre);
+    if (!it.hasNext()) return { ok: true, noExistia: true }; // idempotente
+    while (it.hasNext()) it.next().setTrashed(true);
+    const mins = carpeta.getFoldersByName('miniaturas');
+    if (mins.hasNext()) { const im = mins.next().getFilesByName(nombre); while (im.hasNext()) im.next().setTrashed(true); }
+    const hojaF = hoja_(HOJA_FOTOS);
+    const ultima = hojaF.getLastRow();
+    if (ultima >= 2) {
+      const vals = hojaF.getRange(2, 1, ultima - 1, 2).getValues();
+      for (let i = vals.length - 1; i >= 0; i--) {
+        if (vals[i][0] === lote.ticket && Number(vals[i][1]) === nro) hojaF.deleteRow(i + 2);
+      }
+    }
+    const celda = lote.hoja.getRange(lote.nroFila, COL_LOTES.indexOf('fotosRecibidas') + 1);
+    celda.setValue(Math.max(0, (Number(celda.getValue()) || 0) - 1));
+    CacheService.getScriptCache().remove(claveMini_(lote.ticket, nro));
   } finally {
     lock.releaseLock();
   }
@@ -565,6 +639,18 @@ function esJpeg_(bytes) {
 /* ====================================================================== */
 /* Configuración inicial                                                   */
 /* ====================================================================== */
+
+// Si el código agrega columnas nuevas, completa los encabezados una sola vez.
+const VERSION_ESQUEMA = '2';
+function asegurarEncabezados_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('ESQUEMA') === VERSION_ESQUEMA) return;
+  [[HOJA_LOTES, COL_LOTES], [HOJA_FOTOS, COL_FOTOS]].forEach(([nombre, cols]) => {
+    const h = SpreadsheetApp.getActive().getSheetByName(nombre);
+    if (h) h.getRange(1, 1, 1, cols.length).setValues([cols]).setFontWeight('bold');
+  });
+  props.setProperty('ESQUEMA', VERSION_ESQUEMA);
+}
 
 function configurar() {
   const ss = SpreadsheetApp.getActive();

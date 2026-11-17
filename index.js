@@ -28,7 +28,8 @@ const state = {
   agente: '',
   patente: '',
   ubicacion: null,   // { lat, lng, accuracy, capturedAt }
-  fotos: [],         // [{ blob, objectUrl, capturedAt, shotNumber, width, height, fuente }]
+  descripcion: '',
+  fotos: [],         // [{ blob, mini, objectUrl, capturedAt, shotNumber, width, height, fuente, estado }]
   nextShotNumber: 1,
   stream: null,
   imageCapture: null,
@@ -63,6 +64,7 @@ $('btnComenzar').addEventListener('click', () => {
   $('inicioError').textContent = '';
   state.agente = agente;
   state.patente = patente;
+  state.descripcion = limpiarTexto($('descripcionInput').value).slice(0, 300);
   showScreen('screenUbicacion');
   solicitarUbicacion();
 });
@@ -141,7 +143,7 @@ $('btnConfirmarUbic').addEventListener('click', async () => {
       // ticket que se quema en el QR de cada foto.
       textoUbic(null, 'Creando el ticket…');
       const r = await llamarServidor({
-        accion: 'crearLote', agente: state.agente, patente: state.patente,
+        accion: 'crearLote', agente: state.agente, patente: state.patente, descripcion: state.descripcion,
         ubicacion: state.ubicacion, userAgent: navigator.userAgent.slice(0, 300)
       });
       if (!/^[A-HJKMNP-Z2-9]{6}$/.test(r.ticket) || !/^[a-f0-9]{64}$/.test(r.token)) throw new Error('respuesta_invalida');
@@ -202,6 +204,11 @@ function renderThumbs() {
     img.src = foto.objectUrl;
     img.alt = 'Foto ' + foto.shotNumber;
     div.appendChild(img);
+    const est = document.createElement('span');
+    est.className = 'thumb__estado thumb__estado--' + (foto.estado || 'cola');
+    est.textContent = foto.estado === 'ok' ? '✓' : foto.estado === 'error' ? '!' : '↑';
+    est.title = foto.estado === 'ok' ? 'Ya subida' : foto.estado === 'error' ? 'No se pudo subir (se reintenta al finalizar)' : 'Subiendo…';
+    div.appendChild(est);
     const del = document.createElement('button');
     del.type = 'button';
     del.textContent = '✕';
@@ -214,13 +221,21 @@ function renderThumbs() {
   $('fotoCounter').textContent = `${state.fotos.length} / ${MAX_FOTOS}` + (ultima ? ` · ${ultima.width}×${ultima.height}` : '');
   btnDisparar.disabled = !puedeDisparar();
   $('btnFinalizar').disabled = state.fotos.length === 0;
+  const listas = state.fotos.filter(f => f.estado === 'ok').length;
+  $('estadoSubida').textContent = state.fotos.length
+    ? (navigator.onLine === false ? '⚠ Sin conexión: las fotos se suben cuando vuelva la señal. ' : '') + `☁ ${listas} de ${state.fotos.length} fotos ya subidas`
+    : '';
 }
 
 const puedeDisparar = () => state.fotos.length < MAX_FOTOS && state.nextShotNumber <= MAX_DISPAROS;
 
 function eliminarFoto(idx) {
   const [foto] = state.fotos.splice(idx, 1);
-  if (foto) URL.revokeObjectURL(foto.objectUrl);
+  if (!foto) return;
+  URL.revokeObjectURL(foto.objectUrl);
+  if (foto.estado === 'ok') borrarRemota(foto);
+  else if (foto.estado === 'subiendo') foto.borrar = true; // se borra apenas termine de subir
+  else foto.estado = 'descartada';
   renderThumbs();
 }
 
@@ -282,7 +297,7 @@ async function capturarFoto(qrTexto) {
     ctx.drawImage(fuente.src, 0, 0, canvas.width, canvas.height);
     dibujarQr(canvas, qrCanvas);
     let blob = null;
-    for (const q of [FOTO_CALIDAD_JPEG, 0.92, 0.88, 0.82]) {
+    for (const q of [FOTO_CALIDAD_JPEG, 0.88, 0.84, 0.8]) {
       blob = await canvasToBlob(canvas, q);
       if (blob && blob.size <= FOTO_MAX_BYTES) break;
     }
@@ -310,8 +325,10 @@ btnDisparar.addEventListener('click', async () => {
     const shotNumber = state.nextShotNumber++;
     const res = await capturarFoto(`${state.ticketCode}-${nn(shotNumber)}`);
     if (!res) throw new Error('el navegador no pudo generar la imagen');
-    state.fotos.push({ ...res, objectUrl: URL.createObjectURL(res.blob), capturedAt: Date.now(), shotNumber });
+    const foto = { ...res, objectUrl: URL.createObjectURL(res.blob), capturedAt: Date.now(), shotNumber, estado: 'cola', intentos: 0 };
+    state.fotos.push(foto);
     renderThumbs();
+    procesarCola(); // empieza a subir ya, mientras se sacan las demás
   } catch (e) {
     camaraError.textContent = 'No se pudo tomar la foto (la cámara todavía no está lista). Esperá un segundo y probá de nuevo.';
     console.error(e);
@@ -340,6 +357,7 @@ const MENSAJES = {
   lote_cerrado: 'el lote ya fue revisado',
   lote_vencido: 'pasaron más de 2 horas desde que se creó el ticket; empezá un lote nuevo',
   maximo_de_fotos: 'se alcanzó el máximo de fotos',
+  en_proceso: 'la foto se está guardando',
   foto_muy_grande: 'la foto es demasiado grande',
   no_es_jpeg: 'el archivo no es una foto válida'
 };
@@ -397,6 +415,84 @@ async function conReintentos(fn, intentos = 3) {
   throw ultimoError;
 }
 
+/* Cola de subida en segundo plano --------------------------------------- */
+// Cada foto se empieza a subir apenas se saca (de a 2 en paralelo). Al tocar
+// "Finalizar" solo falta lo que quedó en camino. Estados de cada foto:
+// cola -> subiendo -> ok | espera (reintento) | error | descartada.
+const SUBIDA_PARALELA = 2;
+const MAX_INTENTOS = 4;
+let activos = 0;
+let generacion = 0; // cambia al empezar otro lote: descarta trabajos viejos
+
+function procesarCola() {
+  if (!state.token || navigator.onLine === false) return;
+  while (activos < SUBIDA_PARALELA) {
+    const foto = state.fotos.find(f => f.estado === 'cola');
+    if (!foto) break;
+    subirUna(foto, generacion);
+  }
+}
+
+async function subirUna(foto, gen) {
+  activos++;
+  foto.estado = 'subiendo';
+  renderThumbs();
+  try {
+    const data = await blobABase64(foto.blob);
+    const mini = foto.mini ? await blobABase64(foto.mini) : '';
+    await llamarServidor({
+      accion: 'subirFoto', ticket: state.ticketCode, token: state.token,
+      nro: foto.shotNumber, capturedAt: foto.capturedAt,
+      width: foto.width, height: foto.height, fuente: foto.fuente, data, mini
+    });
+    if (gen !== generacion) return;
+    foto.estado = 'ok';
+    state.subidas.add(foto.shotNumber);
+    if (foto.borrar) borrarRemota(foto); // la borraron mientras subía
+  } catch (e) {
+    if (gen !== generacion) return;
+    foto.intentos = (foto.intentos || 0) + 1;
+    foto.error = e && e.message;
+    if (DEFINITIVOS.has(foto.error) || foto.intentos >= MAX_INTENTOS) {
+      foto.estado = foto.borrar ? 'descartada' : 'error';
+    } else {
+      foto.estado = 'espera';
+      setTimeout(() => {
+        if (gen === generacion && foto.estado === 'espera') { foto.estado = foto.borrar ? 'descartada' : 'cola'; procesarCola(); }
+      }, 2000 * foto.intentos);
+    }
+  } finally {
+    if (gen === generacion) {
+      activos--;
+      renderThumbs();
+      procesarCola();
+    }
+  }
+}
+
+const borradosEnCurso = new Set();
+function borrarRemota(foto) {
+  state.subidas.delete(foto.shotNumber);
+  foto.estado = 'descartada';
+  const p = conReintentos(() => llamarServidor({
+    accion: 'borrarFoto', ticket: state.ticketCode, token: state.token, nro: foto.shotNumber
+  })).catch((e) => console.error('No se pudo borrar la foto del servidor', e));
+  borradosEnCurso.add(p);
+  p.finally(() => borradosEnCurso.delete(p));
+}
+
+const ocupadas = () => state.fotos.some(f => f.estado === 'cola' || f.estado === 'subiendo' || f.estado === 'espera');
+
+function esperarCola(alAvanzar) {
+  return new Promise((resolve) => {
+    const chequear = () => {
+      alAvanzar();
+      if (!ocupadas()) resolve(); else setTimeout(chequear, 400);
+    };
+    chequear();
+  });
+}
+
 async function subirLote() {
   if (state.subiendo || state.fotos.length === 0) return;
   state.subiendo = true;
@@ -407,47 +503,47 @@ async function subirLote() {
   const label = $('subProgressLabel');
   const log = $('subLog');
   const total = state.fotos.length;
-  const pintar = (hechas, parcial = 0) => {
-    fill.style.width = Math.round(((hechas + parcial) / total) * 100) + '%';
-    label.textContent = `${hechas} / ${total}`;
+  const pintar = () => {
+    const listas = state.fotos.filter(f => f.estado === 'ok').length;
+    fill.style.width = Math.round((listas / total) * 100) + '%';
+    label.textContent = `${listas} / ${total}`;
+    log.textContent = listas < total ? `Subiendo fotos… (${listas} de ${total} listas)` : 'Cerrando el lote…';
   };
-  pintar(state.subidas.size);
 
   try {
-    // De a 2 fotos en paralelo: mientras una se procesa en Google, la otra
-    // ya viaja por la red. El servidor serializa lo crítico con un lock.
-    const pendientes = state.fotos.filter(f => !state.subidas.has(f.shotNumber));
-    let siguiente = 0;
-    const trabajador = async () => {
-      while (siguiente < pendientes.length) {
-        const foto = pendientes[siguiente++];
-        log.textContent = `Subiendo fotos… (${state.subidas.size} de ${total} listas)`;
-        const data = await blobABase64(foto.blob);
-        const mini = foto.mini ? await blobABase64(foto.mini) : '';
-        await conReintentos(() => llamarServidor({
-          accion: 'subirFoto', ticket: state.ticketCode, token: state.token,
-          nro: foto.shotNumber, capturedAt: foto.capturedAt,
-          width: foto.width, height: foto.height, fuente: foto.fuente, data, mini
-        }));
-        state.subidas.add(foto.shotNumber);
-        pintar(state.subidas.size);
-      }
-    };
-    await Promise.all([trabajador(), trabajador()]);
+    // Las que fallaron antes vuelven a la cola (salvo errores definitivos).
+    state.fotos.forEach(f => {
+      if (f.estado === 'error' && !DEFINITIVOS.has(f.error)) { f.estado = 'cola'; f.intentos = 0; }
+    });
+    procesarCola();
+    await esperarCola(pintar);
+    const fallidas = state.fotos.filter(f => f.estado !== 'ok');
+    if (fallidas.length) {
+      const e = new Error(fallidas[0].error || 'error de red');
+      throw e;
+    }
+    await Promise.all([...borradosEnCurso]);
     await conReintentos(() => llamarServidor({
       accion: 'cerrarLote', ticket: state.ticketCode, token: state.token, fotoCount: state.fotos.length
     }));
-
     mostrarTicket();
   } catch (e) {
     console.error(e);
     log.textContent = 'Se cortó la subida (' + mensajeError(e) + '). Tus fotos siguen en este dispositivo.';
-    label.textContent = `${state.subidas.size} / ${total} subidas`;
+    label.textContent = `${state.fotos.filter(f => f.estado === 'ok').length} / ${total} subidas`;
     $('reintentarRow').classList.remove('hidden');
   } finally {
     state.subiendo = false;
   }
 }
+
+// Si vuelve la señal, se retoma la cola sola.
+window.addEventListener('online', () => {
+  state.fotos.forEach(f => { if (f.estado === 'error' && !DEFINITIVOS.has(f.error)) { f.estado = 'cola'; f.intentos = 0; } });
+  procesarCola();
+  renderThumbs();
+});
+window.addEventListener('offline', () => renderThumbs());
 
 $('btnFinalizar').addEventListener('click', subirLote);
 $('btnReintentarSubida').addEventListener('click', subirLote);
@@ -511,12 +607,15 @@ $('btnDescargarZip').addEventListener('click', async () => {
 
 function volverAlInicio() {
   detenerCamara();
+  generacion++;      // las subidas en curso del lote anterior se ignoran
+  activos = 0;
   state.fotos.forEach(f => URL.revokeObjectURL(f.objectUrl));
   Object.assign(state, {
     fotos: [], ubicacion: null, token: null, subidas: new Set(),
-    ticketCode: null, nextShotNumber: 1, patente: ''
+    ticketCode: null, nextShotNumber: 1, patente: '', descripcion: ''
   });
   $('patenteInput').value = '';
+  $('descripcionInput').value = '';
   $('ticketPreview').textContent = '';
   $('camaraError').textContent = '';
   $('reintentarRow').classList.add('hidden');
@@ -530,15 +629,24 @@ $('btnNuevoLote').addEventListener('click', volverAlInicio);
 // enviar, se pide confirmación para no perderlas sin querer.
 function irAlInicioDesdeLogo() {
   if (state.subiendo) return; // no cortar una subida en curso
-  const pendientes = state.fotos.length - state.subidas.size;
-  if (pendientes > 0 && !confirm(`Tenés ${pendientes} foto(s) sin enviar. Si volvés al inicio se pierden. ¿Continuar?`)) return;
+  const enTicket = $('screenTicket').classList.contains('active');
+  const pendientes = enTicket ? 0 : state.fotos.length;
+  if (pendientes > 0 && !confirm(`Este lote todavía no se finalizó (${pendientes} foto/s). Si volvés al inicio queda incompleto. ¿Continuar?`)) return;
   volverAlInicio();
 }
 $('btnInicio').addEventListener('click', irAlInicioDesdeLogo);
 $('btnInicio').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); irAlInicioDesdeLogo(); } });
 
+// iPhone/Safari apaga la cámara al cambiar de app: al volver se reactiva sola.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !$('screenCamara').classList.contains('active')) return;
+  const track = state.stream && state.stream.getVideoTracks()[0];
+  if (!track || track.readyState === 'ended' || track.muted) { detenerCamara(); iniciarCamara(); }
+  procesarCola();
+});
+
 window.addEventListener('beforeunload', (e) => {
-  if (state.subiendo || state.subidas.size < state.fotos.length) {
+  if (state.subiendo || (state.fotos.length && !$('screenTicket').classList.contains('active'))) {
     e.preventDefault();
     e.returnValue = '';
   }
