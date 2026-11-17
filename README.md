@@ -1,6 +1,7 @@
-# Validador de fotos
+# Validador de fotografías
 
-Sistema para que **agentes / brokers** carguen fotos de vehículos en **máxima calidad**,
+Sistema para que **agentes / brokers** carguen hasta 20 fotografías de cualquier bien
+(vehículos, locales, maquinarias…) en **máxima calidad**,
 con GPS y un código QR anti-fraude quemado en cada foto. **Todo se guarda en una cuenta de
 Google propia** (Drive + Planilla): no hay Firebase, Cloudinary ni servidores de terceros
 que guarden datos.
@@ -18,8 +19,8 @@ Celular del broker                      Tu cuenta de Google
                                         └────────────────────────────────────────┘
 ```
 
-- `index.html` + `index.js` — el broker indica su nombre (obligatorio) y la patente
-  (opcional), confirma su ubicación (GPS, no editable) y saca hasta 20 fotos con la
+- `index.html` + `index.js` — la persona indica su nombre o agencia (obligatorio) y una
+  referencia libre del bien (chapa, dirección, póliza; opcional), confirma su ubicación (GPS, no editable) y saca hasta 20 fotos con la
   cámara del navegador. Se capturan a **resolución nativa** (`ImageCapture.takePhoto()`
   en Android, cuadro 4K en iPhone), hasta 4096 px y JPEG 0.95, con el QR `TICKET-NN`
   quemado. La subida muestra progreso, reintenta sola y permite "Reintentar subida" sin
@@ -69,7 +70,7 @@ a propósito (los brokers no tienen cuenta); toda la seguridad está del lado de
 | A01 Control de acceso | Ver o tocar lotes ajenos | Sin sesión, el endpoint **solo puede crear lotes y agregar fotos** (con el token de ese lote). Leer, ver fotos, revisar y verificar QR exige sesión de admin válida. |
 | A02 Criptografía | Ticket adivinable / subir a lotes ajenos | Ticket y **token secreto por lote** generados en el servidor (aleatorio seguro). En la planilla se guarda solo el hash SHA-256 del token; comparación en tiempo constante. |
 | A03 Inyección | XSS en el panel, fórmulas en la planilla, archivos maliciosos | El panel pinta todo con `textContent`. Los textos que empiezan con `= + - @` se neutralizan (inyección de fórmulas en Sheets). Solo se aceptan **JPEG reales** (se revisan los bytes) y el nombre del archivo lo arma el servidor. |
-| A04 Diseño | Abuso / llenar el Drive | Máx. 20 fotos y 15 MB por foto, solo con el lote pendiente y dentro de las 2 h; tope global de 120 lotes por hora. |
+| A04 Diseño | Abuso / DoS / llenar el Drive | Máx. 20 fotos y 15 MB por foto, solo con el lote pendiente y dentro de las 2 h. Topes globales: 40 lotes por hora, 200 lotes y 5 GB por día (ajustables en `CONFIG` de Codigo.gs); el panel admin muestra el uso del día. Sin login no se puede limitar por persona (Apps Script no recibe la IP): eso queda para cuando haya login de agentes. |
 | A05 Configuración | Clickjacking, scripts inyectados | CSP estricta sin scripts inline, `object-src 'none'`, bloqueo de iframes. |
 | A06 Componentes | Librerías con fallas | Versiones fijas de qrcode y jszip. |
 | A07 Autenticación | Fuerza bruta, sesiones eternas | Contraseñas de admin con sal + 3000 rondas HMAC-SHA256 (nunca en texto plano, mínimo 12 caracteres); bloqueo 15 min tras 5 fallos y tope global por hora; mismo mensaje para usuario o clave incorrectos; sesión aleatoria de 256 bits que vence a los 30 min sin uso (máx. 8 h) y vive solo en la pestaña. La Planilla sigue protegida por el login de Google (activá verificación en dos pasos). |

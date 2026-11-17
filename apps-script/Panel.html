@@ -52,8 +52,8 @@
     app.appendChild(el('span', { 'class': 'badge ' + estado }, estado));
 
     var t = el('table');
-    fila(t, 'Agente / broker', lote.agente);
-    fila(t, 'Patente', lote.patente);
+    fila(t, 'Nombre / agencia', lote.agente);
+    fila(t, 'Referencia', lote.patente);
     fila(t, 'Creado', lote.creado);
     fila(t, 'Fotos', lote.fotosRecibidas + (lote.fotosDeclaradas ? ' de ' + lote.fotosDeclaradas : ''));
     fila(t, 'Ubicación', lote.lat + ', ' + lote.lng + ' (±' + lote.precisionM + ' m)');

@@ -17,7 +17,9 @@
  *     una foto hay que presentar el token; en la planilla solo se guarda su hash.
  *   - Solo JPEG reales (se revisan los bytes), tamaño máximo, máximo 20 fotos,
  *     solo mientras el lote está pendiente y dentro de las 2 h de creado.
- *   - Tope global de lotes por hora contra abuso/llenado del Drive.
+ *   - Topes globales contra abuso (DoS / llenar el Drive): lotes por hora,
+ *     lotes por día y GB de fotos por día (CONFIG). Se guardan en
+ *     PropertiesService para que no se pierdan.
  *   - Errores genéricos hacia afuera (sin detalles internos).
  *   - Las celdas de texto se neutralizan contra "inyección de fórmulas" (=, +, -, @).
  */
@@ -28,7 +30,11 @@ const CONFIG = {
   MAX_NRO_FOTO: 99,
   MAX_BYTES_FOTO: 15 * 1024 * 1024,
   VENTANA_SUBIDA_MS: 2 * 60 * 60 * 1000,
-  MAX_LOTES_POR_HORA: 120,
+  // Topes globales (sin login no se puede limitar por persona: Apps Script no
+  // recibe la IP). Ajustalos según el uso real.
+  MAX_LOTES_POR_HORA: 40,
+  MAX_LOTES_POR_DIA: 200,
+  MAX_GB_POR_DIA: 5,
   TICKET_CHARS: 'ABCDEFGHJKMNPQRSTUVWXYZ23456789',
   ESTADOS: ['pendiente', 'aprobado', 'rechazado'],
   ZONA: 'America/Asuncion'
@@ -81,7 +87,8 @@ function doPost(e) {
 function crearLote_(b) {
   const agente = texto_(b.agente, 80);
   if (agente.length < 2) throw publico_('agente_invalido');
-  const patente = String(b.patente || '').toUpperCase().replace(/[^A-Z0-9 -]/g, '').trim().slice(0, 12);
+  // "patente" = referencia libre del bien (chapa, dirección, póliza…).
+  const patente = texto_(b.patente, 60).replace(/[^\p{L}\p{N} .,:;#/°ºª()+-]/gu, '');
   const u = b.ubicacion || {};
   const lat = Number(u.lat), lng = Number(u.lng), acc = Number(u.accuracy), gpsAt = Number(u.capturedAt);
   if (!(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 && acc >= 0 && acc < 100000)) throw publico_('ubicacion_invalida');
@@ -99,6 +106,8 @@ function crearLote_(b) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
+    const uso = usoHoy_();
+    if (uso.lotes >= CONFIG.MAX_LOTES_POR_DIA) throw publico_('limite_diario');
     const hoja = hoja_(HOJA_LOTES);
     do { ticket = generarTicket_(); } while (buscarFila_(hoja, ticket));
     const carpeta = carpetaLote_(ticket, ahora);
@@ -110,6 +119,8 @@ function crearLote_(b) {
       carpeta: carpeta.getUrl(), nota: '', revisadoPor: '', revisadoAt: '',
       userAgent: seguroCelda_(texto_(b.userAgent, 300)), tokenHash: sha256_(token)
     }));
+    uso.lotes++;
+    guardarUso_(uso);
   } finally {
     lock.releaseLock();
   }
@@ -144,6 +155,8 @@ function subirFoto_(b) {
     const celdaRecibidas = lote.hoja.getRange(lote.nroFila, COL_LOTES.indexOf('fotosRecibidas') + 1);
     const recibidas = Number(celdaRecibidas.getValue()) || 0;
     if (recibidas >= CONFIG.MAX_FOTOS) throw publico_('maximo_de_fotos');
+    const uso = usoHoy_();
+    if (uso.bytes + bytes.length > CONFIG.MAX_GB_POR_DIA * 1024 * 1024 * 1024) throw publico_('limite_diario');
 
     const archivo = carpeta.createFile(Utilities.newBlob(bytes, 'image/jpeg', nombre));
     archivo.setDescription(`Ticket ${lote.ticket} · foto ${nro} · agente ${lote.fila.agente}`);
@@ -157,6 +170,8 @@ function subirFoto_(b) {
       archivoId: archivo.getId(), miniId
     }));
     celdaRecibidas.setValue(recibidas + 1);
+    uso.bytes += bytes.length + (mini ? mini.length : 0);
+    guardarUso_(uso);
   } finally {
     lock.releaseLock();
   }
@@ -316,7 +331,11 @@ function adminLotes_(b) {
   const lotes = filas.map(loteDeFila_)
     .sort((x, y) => String(y.creado || '').localeCompare(String(x.creado || '')))
     .slice(0, 1000);
-  return { ok: true, lotes: lotes };
+  const uso = usoHoy_();
+  return {
+    ok: true, lotes: lotes,
+    uso: { lotes: uso.lotes, maxLotes: CONFIG.MAX_LOTES_POR_DIA, gb: uso.bytes / 1073741824, maxGb: CONFIG.MAX_GB_POR_DIA }
+  };
 }
 
 function adminLote_(b) {
@@ -476,6 +495,21 @@ function miniBase64_(f) {
   } catch (_) {
     return null;
   }
+}
+
+// Uso del día (lotes creados y bytes recibidos), en hora de Paraguay.
+function usoHoy_() {
+  const clave = 'uso_' + Utilities.formatDate(new Date(), CONFIG.ZONA, 'yyyyMMdd');
+  let uso = null;
+  try { uso = JSON.parse(PropertiesService.getScriptProperties().getProperty(clave) || 'null'); } catch (_) { uso = null; }
+  return { clave: clave, lotes: Number(uso && uso.lotes) || 0, bytes: Number(uso && uso.bytes) || 0 };
+}
+
+function guardarUso_(uso) {
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(uso.clave, JSON.stringify({ lotes: uso.lotes, bytes: uso.bytes }));
+  // Limpieza: borra contadores de días anteriores.
+  props.getKeys().forEach(k => { if (k.indexOf('uso_') === 0 && k !== uso.clave) props.deleteProperty(k); });
 }
 
 function esJpeg_(bytes) {

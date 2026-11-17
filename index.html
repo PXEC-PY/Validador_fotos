@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src https://script.google.com https://script.googleusercontent.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
-<title>Validador de fotos del vehículo — La Meridional Paraguaya S.A. de Seguros</title>
+<title>Validador de fotografías — La Meridional Paraguaya S.A. de Seguros</title>
 <link rel="icon" href="logo.png">
 <link rel="stylesheet" href="shared.css">
 <style>
@@ -69,16 +69,18 @@
 .hidden{display:none !important;}
 .ticket-preview{font-size:12px; color:var(--text-dim); margin:2px 0 10px;}
 .ticket-preview:empty{display:none;}
+.topbar__brand--link{cursor:pointer; border-radius:var(--radius);}
+.topbar__brand--link:hover .topbar__tool{color:var(--accent);}
 </style>
 </head>
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="topbar__brand">
+    <div class="topbar__brand topbar__brand--link" id="btnInicio" role="button" tabindex="0" title="Volver al inicio" aria-label="Volver al inicio">
       <img src="logo.png" alt="La Meridional" class="topbar__logo">
       <div class="topbar__brandtext">
         <div class="topbar__company">La Meridional Paraguaya S.A. de Seguros</div>
-        <div class="topbar__tool">Validador de fotos</div>
+        <div class="topbar__tool">Validador de fotografías</div>
       </div>
     </div>
     <div class="topbar__spacer"></div>
@@ -89,15 +91,17 @@
 
     <!-- 1. Inicio -->
     <section class="screen active" id="screenInicio">
-      <h1>Fotos del vehículo</h1>
-      <p>Vamos a tomar hasta <strong id="maxFotosLabel">20</strong> fotos del vehículo directamente desde la cámara de este dispositivo. También vamos a registrar tu ubicación actual. Ninguno de los dos datos se puede cargar a mano: se toman en el momento, desde el navegador.</p>
+      <h1>Validador de fotografías</h1>
+      <p>Con este sistema podés tomar hasta <strong id="maxFotosLabel">20</strong> fotografías de cualquier bien —vehículos, locales, maquinarias, etc.— para La Meridional, directamente desde la cámara de este dispositivo.</p>
+      <p>También se registra tu ubicación actual. Ni las fotos ni la ubicación se pueden cargar a mano: se toman en el momento, desde el navegador.</p>
       <div class="field">
-        <label for="agenteInput">Agente / broker que envía las fotos</label>
-        <input type="text" id="agenteInput" placeholder="Nombre y apellido, o agencia" autocomplete="name" maxlength="80" required>
+        <label for="agenteInput">Nombre y apellido, o agencia</label>
+        <input type="text" id="agenteInput" placeholder="Ej.: Juan Pérez · Agencia Centro" autocomplete="name" maxlength="80" required>
       </div>
       <div class="field">
-        <label for="patenteInput">Patente del vehículo (opcional, ayuda a identificar el lote)</label>
-        <input type="text" id="patenteInput" placeholder="AA123BB" autocomplete="off" maxlength="12">
+        <label for="patenteInput">Referencia de lo que vas a fotografiar</label>
+        <input type="text" id="patenteInput" placeholder="Ej.: chapa ABC 123 · local Av. España 1234" autocomplete="off" maxlength="60">
+        <div style="font-size:11.5px; color:var(--text-faint); margin-top:4px;">Opcional: algo que lo identifique (chapa del vehículo, dirección del local, n.º de póliza…).</div>
       </div>
       <div id="inicioError" class="error-msg"></div>
       <p style="font-size:12px;">Las fotos se guardan en máxima calidad (resolución completa de la cámara). Con datos móviles la subida puede tardar unos minutos: conviene usar Wi-Fi.</p>
@@ -119,8 +123,8 @@
 
     <!-- 3. Cámara -->
     <section class="screen" id="screenCamara">
-      <h1>Tomá las fotos del vehículo</h1>
-      <p>Sacá fotos desde distintos ángulos (frente, contrafrente, laterales, patente, daños si los hay). Podés borrar y repetir una foto puntual antes de subir el lote. Cada foto queda marcada con un código QR que identifica el ticket, la fecha/hora y la ubicación reales.</p>
+      <h1>Tomá las fotografías</h1>
+      <p>Sacá fotos desde distintos ángulos (frente, laterales, fondo, detalles y daños si los hay). Podés borrar y repetir una foto puntual antes de subir el lote. Cada foto queda marcada con un código QR que identifica el ticket, la fecha/hora y la ubicación reales.</p>
       <div class="ticket-preview mono" id="ticketPreview"></div>
       <div class="camera-box">
         <video id="video" autoplay playsinline muted></video>
@@ -138,7 +142,7 @@
 
     <!-- 4. Subiendo -->
     <section class="screen" id="screenSubiendo">
-      <h1>Subiendo fotos…</h1>
+      <h1>Subiendo fotografías…</h1>
       <p>No cierres esta ventana hasta que termine.</p>
       <div class="progress-bar"><div class="progress-bar__fill" id="subProgressFill"></div></div>
       <div class="progress-label" id="subProgressLabel">0 / 0</div>
@@ -168,7 +172,7 @@
         <button class="btn" id="btnDescargarZip" type="button">Descargar todo (.zip)</button>
       </div>
       <div class="actions">
-        <button class="btn" id="btnNuevoLote" type="button">Cargar otro vehículo</button>
+        <button class="btn" id="btnNuevoLote" type="button">Cargar otro bien</button>
       </div>
     </section>
 

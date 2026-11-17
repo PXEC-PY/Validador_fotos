@@ -36,6 +36,9 @@
   padding:6px 10px; color:var(--text); min-width:160px; flex:1;
 }
 .chip{border:1px solid var(--border); background:var(--panel); color:var(--text-dim); padding:5px 10px; border-radius:999px; cursor:pointer; font-size:12px; white-space:nowrap;}
+.chip.uso{cursor:default; font-family:var(--mono); font-size:11px;}
+.chip.uso:empty{display:none;}
+.chip.uso--alto{border-color:var(--orange-bd); color:var(--orange); background:var(--orange-bg);}
 .chip[aria-pressed="true"]{border-color:var(--accent); color:var(--text); background:var(--accent-soft);}
 
 .list{flex:1; overflow-y:auto; padding:4px 10px 20px;}
@@ -106,7 +109,7 @@ textarea#adminNota{
     <div class="card login-box">
       <img src="logo.png" alt="La Meridional" style="height:48px; width:auto; display:block; margin:0 auto 14px;">
       <h1 style="text-align:center;">Panel admin</h1>
-      <p>Iniciá sesión para revisar los lotes de fotos subidos por los clientes.</p>
+      <p>Iniciá sesión para revisar las fotografías recibidas.</p>
       <div class="field"><label for="userInput">Usuario</label><input type="text" id="userInput" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="60"></div>
       <div class="field"><label for="passInput">Contraseña</label><input type="password" id="passInput" autocomplete="current-password" maxlength="200"></div>
       <button class="btn primary" id="btnLogin" type="button" style="width:100%; margin-top:6px;">Ingresar</button>
@@ -130,7 +133,7 @@ textarea#adminNota{
         <img src="logo.png" alt="La Meridional" class="topbar__logo">
         <div class="topbar__brandtext">
           <div class="topbar__company">La Meridional Paraguaya S.A. de Seguros</div>
-          <div class="topbar__tool">Panel admin</div>
+          <div class="topbar__tool">Validador de fotografías · Panel admin</div>
         </div>
       </div>
       <div class="topbar__spacer"></div>
@@ -142,12 +145,13 @@ textarea#adminNota{
     <div class="layout">
       <main class="col-main">
         <div class="toolbar">
-          <input type="search" id="searchInput" placeholder="Buscar por ticket, patente o agente…" aria-label="Buscar">
+          <input type="search" id="searchInput" placeholder="Buscar por ticket, nombre o referencia…" aria-label="Buscar">
           <button class="chip" data-status="todos" aria-pressed="true" type="button">Todos</button>
           <button class="chip" data-status="pendiente" aria-pressed="false" type="button">Pendientes</button>
           <button class="chip" data-status="aprobado" aria-pressed="false" type="button">Aprobados</button>
           <button class="chip" data-status="rechazado" aria-pressed="false" type="button">Rechazados</button>
           <button class="chip" id="btnActualizar" type="button" title="Volver a cargar la lista">↻ Actualizar</button>
+          <span class="chip uso" id="usoHoy" aria-live="polite"></span>
         </div>
         <div class="list" id="list">
           <div class="empty-state" id="emptyState">Todavía no hay lotes cargados.</div>

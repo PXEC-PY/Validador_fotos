@@ -53,7 +53,8 @@ const limpiarTexto = (s) => s.replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/\
 
 $('btnComenzar').addEventListener('click', () => {
   const agente = limpiarTexto($('agenteInput').value).slice(0, 80);
-  const patente = $('patenteInput').value.toUpperCase().replace(/[^A-Z0-9 -]/g, '').trim().slice(0, 12);
+  // Referencia libre (chapa, dirección del local, póliza…): solo texto común.
+  const patente = limpiarTexto($('patenteInput').value).replace(/[^\p{L}\p{N} .,:;#/°ºª()+-]/gu, '').slice(0, 60);
   if (agente.length < 2) {
     $('inicioError').textContent = 'Indicá el nombre del agente o broker que envía las fotos.';
     $('agenteInput').focus();
@@ -333,7 +334,8 @@ const MENSAJES = {
   sin_configurar: 'falta configurar la dirección del servidor',
   agente_invalido: 'nombre de agente inválido',
   ubicacion_invalida: 'ubicación inválida',
-  limite_alcanzado: 'se alcanzó el límite de lotes por hora, probá más tarde',
+  limite_alcanzado: 'el sistema alcanzó su límite de carga por ahora; probá de nuevo más tarde',
+  limite_diario: 'el sistema alcanzó su límite de fotos de hoy; probá de nuevo mañana',
   no_autorizado: 'el ticket no es válido',
   lote_cerrado: 'el lote ya fue revisado',
   lote_vencido: 'pasaron más de 2 horas desde que se creó el ticket; empezá un lote nuevo',
@@ -343,7 +345,7 @@ const MENSAJES = {
 };
 const mensajeError = (e) => MENSAJES[e && e.message] || (e && e.message) || 'error desconocido';
 // Errores que no se arreglan reintentando.
-const DEFINITIVOS = new Set(['no_autorizado', 'lote_cerrado', 'lote_vencido', 'maximo_de_fotos', 'no_es_jpeg', 'foto_muy_grande', 'sin_configurar']);
+const DEFINITIVOS = new Set(['limite_diario', 'limite_alcanzado', 'no_autorizado', 'lote_cerrado', 'lote_vencido', 'maximo_de_fotos', 'no_es_jpeg', 'foto_muy_grande', 'sin_configurar']);
 
 // POST al Apps Script. Se manda como text/plain para que sea un "pedido
 // simple" (sin preflight CORS, que Apps Script no soporta). Google responde
@@ -501,7 +503,8 @@ $('btnDescargarZip').addEventListener('click', async () => {
   }
 });
 
-$('btnNuevoLote').addEventListener('click', () => {
+function volverAlInicio() {
+  detenerCamara();
   state.fotos.forEach(f => URL.revokeObjectURL(f.objectUrl));
   Object.assign(state, {
     fotos: [], ubicacion: null, token: null, subidas: new Set(),
@@ -509,9 +512,24 @@ $('btnNuevoLote').addEventListener('click', () => {
   });
   $('patenteInput').value = '';
   $('ticketPreview').textContent = '';
+  $('camaraError').textContent = '';
+  $('reintentarRow').classList.add('hidden');
   renderThumbs();
   showScreen('screenInicio');
-});
+}
+
+$('btnNuevoLote').addEventListener('click', volverAlInicio);
+
+// Tocar el logo vuelve al inicio desde cualquier paso. Si hay fotos sin
+// enviar, se pide confirmación para no perderlas sin querer.
+function irAlInicioDesdeLogo() {
+  if (state.subiendo) return; // no cortar una subida en curso
+  const pendientes = state.fotos.length - state.subidas.size;
+  if (pendientes > 0 && !confirm(`Tenés ${pendientes} foto(s) sin enviar. Si volvés al inicio se pierden. ¿Continuar?`)) return;
+  volverAlInicio();
+}
+$('btnInicio').addEventListener('click', irAlInicioDesdeLogo);
+$('btnInicio').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); irAlInicioDesdeLogo(); } });
 
 window.addEventListener('beforeunload', (e) => {
   if (state.subiendo || state.subidas.size < state.fotos.length) {

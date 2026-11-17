@@ -143,10 +143,22 @@ async function cargarLotes() {
   try {
     const r = await apiAdmin('adminLotes');
     state.lotes = Array.isArray(r.lotes) ? r.lotes : [];
+    renderUso(r.uso);
     renderList();
   } catch (e) {
     if (e.message !== 'sesion_invalida') { empty.textContent = msg(e); empty.style.display = ''; }
   }
+}
+
+// Uso del día contra los topes anti-abuso del servidor.
+function renderUso(uso) {
+  const el = $('usoHoy');
+  if (!el || !uso) return;
+  const pl = num(uso.maxLotes) ? Math.round((num(uso.lotes) || 0) / uso.maxLotes * 100) : 0;
+  const pg = num(uso.maxGb) ? Math.round((num(uso.gb) || 0) / uso.maxGb * 100) : 0;
+  el.textContent = `Hoy: ${num(uso.lotes) || 0}/${num(uso.maxLotes) || '—'} lotes · ${(num(uso.gb) || 0).toFixed(2)}/${num(uso.maxGb) || '—'} GB`;
+  el.className = 'chip uso ' + (Math.max(pl, pg) >= 80 ? 'uso--alto' : '');
+  el.title = 'Topes diarios anti-abuso (se configuran en Codigo.gs). Al llegar al 100% se dejan de aceptar lotes/fotos hasta mañana.';
 }
 
 function matchesFilters(l) {
@@ -188,7 +200,7 @@ function renderList() {
         <span class="row__ticket">${esc(l.ticket)}</span>
         <span>${statusBadge(l.estado)}${faltan}</span>
       </div>
-      <div class="row__sub">${esc(l.agente || 'sin agente')} · ${esc(l.patente || 'sin patente')} · ${esc(fotos)} fotos · ${esc(fmt(l.creado))}</div>`;
+      <div class="row__sub">${esc(l.agente || 'sin nombre')} · ${esc(l.patente || 'sin referencia')} · ${esc(fotos)} fotos · ${esc(fmt(l.creado))}</div>`;
     const abrir = () => {
       state.selected = l.ticket;
       renderList();
@@ -236,8 +248,8 @@ async function renderDetail(ticket) {
     <div class="section">
       <h3>Datos del lote</h3>
       <table class="kv">
-        <tr><td>Agente / broker</td><td>${esc(lote.agente || '—')}</td></tr>
-        <tr><td>Patente</td><td>${esc(lote.patente || '—')}</td></tr>
+        <tr><td>Nombre / agencia</td><td>${esc(lote.agente || '—')}</td></tr>
+        <tr><td>Referencia</td><td>${esc(lote.patente || '—')}</td></tr>
         <tr><td>Creado (hora del servidor)</td><td>${esc(fmt(lote.creado))}</td></tr>
         <tr><td>Fotos</td><td>${esc(fotos.length)}${totalBytes ? ' · ' + esc((totalBytes / 1048576).toFixed(1)) + ' MB' : ''}</td></tr>
         <tr><td>Navegador</td><td style="font-size:10.5px;">${esc(lote.userAgent || '—')}</td></tr>
@@ -498,8 +510,8 @@ function resultado(valido, mensaje, lote, foto, mini) {
       ${mensaje ? `<p style="margin:8px 0 0; font-size:12.5px;">${esc(mensaje)}</p>` : ''}
       ${lote ? `
       <table class="kv" style="margin-top:10px;">
-        <tr><td>Agente / broker</td><td>${esc(lote.agente || '—')}</td></tr>
-        <tr><td>Patente</td><td>${esc(lote.patente || '—')}</td></tr>
+        <tr><td>Nombre / agencia</td><td>${esc(lote.agente || '—')}</td></tr>
+        <tr><td>Referencia</td><td>${esc(lote.patente || '—')}</td></tr>
         ${foto ? `<tr><td>Foto sacada (celular)</td><td>${esc(fmt(foto.capturadaCelular))}</td></tr>
         <tr><td>Foto recibida (servidor)</td><td>${esc(fmt(foto.recibida))}</td></tr>` : ''}
         <tr><td>Ubicación del lote</td><td>${num(lote.lat) !== null ? esc(num(lote.lat).toFixed(6) + ', ' + num(lote.lng).toFixed(6)) : '—'}</td></tr>
