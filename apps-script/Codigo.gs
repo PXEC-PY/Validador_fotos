@@ -71,6 +71,7 @@ function doPost(e) {
       case 'adminLotes': return json_(adminLotes_(body));
       case 'adminLote': return json_(adminLote_(body));
       case 'adminMinis': return json_(adminMinis_(body));
+      case 'adminMini': return json_(adminMini_(body));
       case 'adminOriginal': return json_(adminOriginal_(body));
       case 'adminRevisar': return json_(adminRevisar_(body));
       case 'adminVerificar': return json_(adminVerificar_(body));
@@ -170,6 +171,9 @@ function subirFoto_(b) {
       archivoId: archivo.getId(), miniId
     }));
     celdaRecibidas.setValue(recibidas + 1);
+    if (mini && b.mini.length <= MAX_CACHE_VALOR) {
+      try { CacheService.getScriptCache().put(claveMini_(lote.ticket, nro), b.mini, CACHE_MINI_S); } catch (_) { /* no crítico */ }
+    }
     uso.bytes += bytes.length + (mini ? mini.length : 0);
     guardarUso_(uso);
   } finally {
@@ -348,6 +352,10 @@ function adminLote_(b) {
     capturadaCelular: f.capturadaCelular, recibida: f.recibida, sha256: f.sha256,
     tieneMini: !!f.miniId
   }));
+  const claves = lote.fotos.map(f => claveMini_(ticket, f.nro));
+  const enCache = claves.length ? CacheService.getScriptCache().getAll(claves) : {};
+  lote.minis = {};
+  lote.fotos.forEach((f, i) => { lote.minis[f.nro] = enCache[claves[i]] || null; });
   return { ok: true, lote: lote };
 }
 
@@ -355,8 +363,17 @@ function adminMinis_(b) {
   sesion_(b);
   const ticket = ticketValido_(b.ticket);
   const minis = {};
-  fotosDe_(ticket).forEach(f => { minis[f.nro] = miniBase64_(f); });
+  fotosDe_(ticket).forEach(f => { minis[f.nro] = miniDe_(ticket, f); });
   return { ok: true, minis: minis };
+}
+
+function adminMini_(b) {
+  sesion_(b);
+  const ticket = ticketValido_(b.ticket);
+  const nro = Number(b.nro);
+  const f = fotosDe_(ticket).find(x => Number(x.nro) === nro);
+  if (!f) throw publico_('no_encontrado');
+  return { ok: true, nro: nro, mini: miniDe_(ticket, f) };
 }
 
 function adminOriginal_(b) {
@@ -403,7 +420,7 @@ function adminVerificar_(b) {
   return {
     ok: true, valido: true, lote: lote,
     foto: { nro: f.nro, capturadaCelular: f.capturadaCelular, recibida: f.recibida, sha256: f.sha256 },
-    mini: miniBase64_(f)
+    mini: miniDe_(m[1], f)
   };
 }
 
@@ -478,7 +495,18 @@ function buscarLote_(ticket) {
 }
 
 function fotosDe_(ticket) {
-  return hoja_(HOJA_FOTOS).getDataRange().getValues().slice(1)
+  const hoja = hoja_(HOJA_FOTOS);
+  const ultima = hoja.getLastRow();
+  if (ultima < 2) return [];
+  // Rápido: primero solo la columna A (tickets), después el bloque de filas
+  // que contiene ese ticket (las fotos de un lote quedan casi siempre juntas).
+  const tickets = hoja.getRange(2, 1, ultima - 1, 1).getValues();
+  let desde = -1, hasta = -1;
+  for (let i = 0; i < tickets.length; i++) {
+    if (tickets[i][0] === ticket) { if (desde < 0) desde = i; hasta = i; }
+  }
+  if (desde < 0) return [];
+  return hoja.getRange(desde + 2, 1, hasta - desde + 1, COL_FOTOS.length).getValues()
     .filter(r => r[0] === ticket)
     .map(r => {
       const f = {};
@@ -486,6 +514,22 @@ function fotosDe_(ticket) {
       return f;
     })
     .sort((a, b) => a.nro - b.nro);
+}
+
+const CACHE_MINI_S = 6 * 60 * 60;     // máximo que permite CacheService
+const MAX_CACHE_VALOR = 100000;        // tope por valor de CacheService
+
+function claveMini_(ticket, nro) { return 'mini_' + ticket + '_' + Number(nro); }
+
+// Miniatura desde la caché rápida; si no está, desde Drive (y se guarda en caché).
+function miniDe_(ticket, f) {
+  const cache = CacheService.getScriptCache();
+  const k = claveMini_(ticket, f.nro);
+  const c = cache.get(k);
+  if (c) return c;
+  const b64 = miniBase64_(f);
+  if (b64 && b64.length <= MAX_CACHE_VALOR) { try { cache.put(k, b64, CACHE_MINI_S); } catch (_) { /* no crítico */ } }
+  return b64;
 }
 
 function miniBase64_(f) {

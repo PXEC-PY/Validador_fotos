@@ -414,20 +414,26 @@ async function subirLote() {
   pintar(state.subidas.size);
 
   try {
-    for (const foto of state.fotos) {
-      if (state.subidas.has(foto.shotNumber)) continue;
-      const hechas = state.subidas.size;
-      log.textContent = `Subiendo foto ${hechas + 1} de ${total} (${(foto.blob.size / 1048576).toFixed(1)} MB)…`;
-      const data = await blobABase64(foto.blob);
-      const mini = foto.mini ? await blobABase64(foto.mini) : '';
-      await conReintentos(() => llamarServidor({
-        accion: 'subirFoto', ticket: state.ticketCode, token: state.token,
-        nro: foto.shotNumber, capturedAt: foto.capturedAt,
-        width: foto.width, height: foto.height, fuente: foto.fuente, data, mini
-      }));
-      state.subidas.add(foto.shotNumber);
-      pintar(state.subidas.size);
-    }
+    // De a 2 fotos en paralelo: mientras una se procesa en Google, la otra
+    // ya viaja por la red. El servidor serializa lo crítico con un lock.
+    const pendientes = state.fotos.filter(f => !state.subidas.has(f.shotNumber));
+    let siguiente = 0;
+    const trabajador = async () => {
+      while (siguiente < pendientes.length) {
+        const foto = pendientes[siguiente++];
+        log.textContent = `Subiendo fotos… (${state.subidas.size} de ${total} listas)`;
+        const data = await blobABase64(foto.blob);
+        const mini = foto.mini ? await blobABase64(foto.mini) : '';
+        await conReintentos(() => llamarServidor({
+          accion: 'subirFoto', ticket: state.ticketCode, token: state.token,
+          nro: foto.shotNumber, capturedAt: foto.capturedAt,
+          width: foto.width, height: foto.height, fuente: foto.fuente, data, mini
+        }));
+        state.subidas.add(foto.shotNumber);
+        pintar(state.subidas.size);
+      }
+    };
+    await Promise.all([trabajador(), trabajador()]);
     await conReintentos(() => llamarServidor({
       accion: 'cerrarLote', ticket: state.ticketCode, token: state.token, fotoCount: state.fotos.length
     }));

@@ -108,6 +108,7 @@ function entrar() {
 function cerrarSesionLocal(aviso) {
   guardarSesion('');
   state.lotes = []; state.selected = null;
+  limpiarMemoria();
   clearTimeout(idleTimer);
   cerrarEscaner();
   $('fotoModal').classList.remove('open');
@@ -228,14 +229,50 @@ setInterval(() => { if (sesionGuardada() && document.visibilityState === 'visibl
 
 /* Detalle --------------------------------------------------------------- */
 
+// Memoria del panel (solo en esta pestaña): lotes ya abiertos, miniaturas y
+// originales. Volver a un lote o a una foto ya vista es instantáneo.
+const memLote = new Map();   // ticket -> lote (sin miniaturas)
+const memMinis = new Map();  // "TICKET-nro" -> base64
+const memOrig = new Map();   // "TICKET-nro" -> Blob (las últimas MAX_ORIG)
+const enCursoOrig = new Map();
+const MAX_ORIG = 15;
+let celdas = {};             // nro -> botón de la grilla visible
+
+function limpiarMemoria() { memLote.clear(); memMinis.clear(); memOrig.clear(); enCursoOrig.clear(); }
+
+// Ejecuta fn sobre items con como máximo n en paralelo.
+async function enParalelo(items, n, fn) {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length) { const it = items[i++]; await fn(it); }
+  });
+  await Promise.all(workers);
+}
+
 async function renderDetail(ticket) {
   const content = $('detailContent');
-  content.innerHTML = '<div class="detail__empty"><span class="spinner"></span> Cargando lote…</div>';
+  const enMemoria = memLote.get(ticket);
+  if (enMemoria) pintarDetalle(enMemoria);
+  else content.innerHTML = '<div class="detail__empty"><span class="spinner"></span> Cargando lote…</div>';
+
   let lote;
   try { lote = (await apiAdmin('adminLote', { ticket })).lote; }
-  catch (e) { if (state.selected === ticket) content.innerHTML = `<div class="detail__empty">${msg(e)}</div>`; return; }
+  catch (e) {
+    if (state.selected === ticket && !enMemoria) content.innerHTML = `<div class="detail__empty">${msg(e)}</div>`;
+    return;
+  }
+  const minis = lote.minis || {};
+  delete lote.minis;
+  for (const [nro, b64] of Object.entries(minis)) if (dataJpeg(b64)) memMinis.set(`${ticket}-${Number(nro)}`, b64);
+  const cambio = !enMemoria || JSON.stringify(enMemoria) !== JSON.stringify(lote);
+  memLote.set(ticket, lote);
   if (state.selected !== ticket) return;
+  if (cambio) pintarDetalle(lote); else ponerMinisDisponibles(ticket);
+  cargarMinisFaltantes(lote);
+}
 
+function pintarDetalle(lote) {
+  const content = $('detailContent');
   const lat = num(lote.lat), lng = num(lote.lng), acc = num(lote.precisionM);
   const fotos = Array.isArray(lote.fotos) ? lote.fotos : [];
   const totalBytes = fotos.reduce((s, f) => s + (num(f.bytes) || 0), 0);
@@ -245,6 +282,22 @@ async function renderDetail(ticket) {
     <div class="detail__title">${esc(lote.ticket)}</div>
     <div>${statusBadge(lote.estado)}</div>
     ${decl !== null && fotos.length < decl ? `<p class="badge orange" style="margin-top:6px;">⚠ El celular declaró ${esc(decl)} fotos y llegaron ${esc(fotos.length)}</p>` : ''}
+    <div class="section">
+      <h3>Fotos <span style="text-transform:none; font-weight:400; color:var(--text-faint);">(click para ver el original)</span></h3>
+      <div class="foto-grid" id="fotoGrid"></div>
+    </div>
+    <div class="section">
+      <h3>Revisión</h3>
+      <textarea id="adminNota" maxlength="1000" placeholder="Nota opcional (ej. motivo de rechazo)"></textarea>
+      <div class="actions-row">
+        <button class="btn primary" id="btnAprobar" type="button">Aprobar</button>
+        <button class="btn danger" id="btnRechazar" type="button">Rechazar</button>
+      </div>
+      <div class="actions-row">
+        <button class="btn" id="btnExportZip" type="button" ${fotos.length ? '' : 'disabled'}>Descargar todo (ZIP de originales)</button>
+      </div>
+      <div class="status-line" id="revisionLine">${lote.revisadoAt ? 'Última revisión: ' + esc(fmt(lote.revisadoAt)) + ' · ' + esc(lote.revisadoPor || '') : ''}</div>
+    </div>
     <div class="section">
       <h3>Datos del lote</h3>
       <table class="kv">
@@ -265,28 +318,12 @@ async function renderDetail(ticket) {
         </table>
         <div class="btn-row" style="margin-top:6px;"><a class="link-btn" href="https://www.google.com/maps?q=${encodeURIComponent(lat + ',' + lng)}" target="_blank" rel="noopener noreferrer">Ver en el mapa</a></div>`
         : '<p class="no-data">Sin datos de ubicación.</p>'}
-    </div>
-    <div class="section">
-      <h3>Fotos <span style="text-transform:none; font-weight:400; color:var(--text-faint);">(click para ver el original)</span></h3>
-      <div class="foto-grid" id="fotoGrid"></div>
-    </div>
-    <div class="section">
-      <h3>Revisión</h3>
-      <textarea id="adminNota" maxlength="1000" placeholder="Nota opcional (ej. motivo de rechazo)"></textarea>
-      <div class="actions-row">
-        <button class="btn primary" id="btnAprobar" type="button">Aprobar</button>
-        <button class="btn danger" id="btnRechazar" type="button">Rechazar</button>
-      </div>
-      <div class="actions-row">
-        <button class="btn" id="btnExportZip" type="button" ${fotos.length ? '' : 'disabled'}>Descargar todo (ZIP de originales)</button>
-      </div>
-      <div class="status-line" id="revisionLine">${lote.revisadoAt ? 'Última revisión: ' + esc(fmt(lote.revisadoAt)) + ' · ' + esc(lote.revisadoPor || '') : ''}</div>
     </div>`;
 
   $('adminNota').value = typeof lote.nota === 'string' ? lote.nota : '';
 
   const grid = $('fotoGrid');
-  const celdas = {};
+  celdas = {};
   for (const f of fotos) {
     const nro = num(f.nro);
     if (nro === null) continue;
@@ -308,50 +345,73 @@ async function renderDetail(ticket) {
     grid.appendChild(fig);
     celdas[nro] = btn;
   }
+  ponerMinisDisponibles(lote.ticket);
 
   $('btnAprobar').addEventListener('click', () => revisar(lote.ticket, 'aprobado'));
   $('btnRechazar').addEventListener('click', () => revisar(lote.ticket, 'rechazado'));
   $('btnExportZip').addEventListener('click', () => exportarZip(lote, fotos));
+}
 
-  // Miniaturas (todas en un solo pedido).
-  try {
-    const r = await apiAdmin('adminMinis', { ticket: lote.ticket });
-    if (state.selected !== ticket) return;
-    for (const [nro, b64] of Object.entries(r.minis || {})) {
-      const btn = celdas[Number(nro)];
-      if (!btn) continue;
-      const src = dataJpeg(b64);
-      if (src) {
-        const img = document.createElement('img');
-        img.src = src; img.alt = 'Foto ' + nro;
-        btn.replaceChildren(img);
-      } else {
-        btn.firstChild.textContent = 'sin miniatura — click para ver';
-      }
-    }
-  } catch (_) {
-    Object.values(celdas).forEach(b => { if (b.firstChild) b.firstChild.textContent = 'click para ver'; });
+function ponerMini(ticket, nro, textoSiFalta) {
+  if (state.selected !== ticket) return;
+  const btn = celdas[nro];
+  if (!btn || btn.querySelector('img')) return;
+  const src = dataJpeg(memMinis.get(`${ticket}-${nro}`));
+  if (src) {
+    const img = document.createElement('img');
+    img.src = src; img.alt = 'Foto ' + nro;
+    btn.replaceChildren(img);
+  } else if (textoSiFalta && btn.firstChild) {
+    btn.firstChild.textContent = textoSiFalta;
   }
+}
+
+function ponerMinisDisponibles(ticket) {
+  Object.keys(celdas).forEach(nro => ponerMini(ticket, Number(nro)));
+}
+
+// Las miniaturas que no estaban en la caché del servidor se piden de a 6 en
+// paralelo y se muestran a medida que llegan.
+function cargarMinisFaltantes(lote) {
+  const ticket = lote.ticket;
+  const faltan = (lote.fotos || []).map(f => num(f.nro)).filter(n => n !== null && !memMinis.has(`${ticket}-${n}`));
+  if (!faltan.length) return;
+  enParalelo(faltan, 6, async (nro) => {
+    try {
+      const r = await apiAdmin('adminMini', { ticket, nro });
+      if (dataJpeg(r.mini)) memMinis.set(`${ticket}-${nro}`, r.mini);
+      ponerMini(ticket, nro, 'sin miniatura — click para ver');
+    } catch (_) {
+      ponerMini(ticket, nro, 'click para ver');
+    }
+  });
 }
 
 async function revisar(ticket, estado) {
   const nota = $('adminNota').value.trim().slice(0, 1000);
   const linea = $('revisionLine');
   linea.textContent = 'Guardando…';
+  ['btnAprobar', 'btnRechazar'].forEach(id => { $(id).disabled = true; });
   try {
     const r = await apiAdmin('adminRevisar', { ticket, estado, nota });
     const i = state.lotes.findIndex(l => l.ticket === ticket);
     if (i >= 0 && r.lote) state.lotes[i] = r.lote;
+    const previo = memLote.get(ticket);
+    if (previo && r.lote) memLote.set(ticket, { ...previo, ...r.lote, fotos: previo.fotos });
     renderList();
-    renderDetail(ticket);
+    // Sin volver a pedir nada al servidor: se repinta con lo que ya hay.
+    if (state.selected === ticket && memLote.get(ticket)) pintarDetalle(memLote.get(ticket));
   } catch (e) {
     linea.textContent = msg(e);
+    ['btnAprobar', 'btnRechazar'].forEach(id => { if ($(id)) $(id).disabled = false; });
   }
 }
 
 /* Foto original --------------------------------------------------------- */
 
 let urlOriginal = null;
+let vista = null; // { ticket, nro, nros: [...] }
+
 function b64ABlob(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -359,46 +419,89 @@ function b64ABlob(b64) {
   return new Blob([bytes], { type: 'image/jpeg' });
 }
 
-async function bajarOriginal(ticket, nro) {
-  const r = await apiAdmin('adminOriginal', { ticket, nro });
-  if (typeof r.data !== 'string' || !B64_RE.test(r.data)) throw new Error('respuesta_invalida');
-  return b64ABlob(r.data);
+// Original con memoria (las últimas MAX_ORIG) y sin pedidos duplicados.
+function bajarOriginal(ticket, nro) {
+  const k = `${ticket}-${nro}`;
+  if (memOrig.has(k)) {
+    const b = memOrig.get(k);
+    memOrig.delete(k); memOrig.set(k, b); // más reciente
+    return Promise.resolve(b);
+  }
+  if (enCursoOrig.has(k)) return enCursoOrig.get(k);
+  const p = apiAdmin('adminOriginal', { ticket, nro }).then((r) => {
+    if (typeof r.data !== 'string' || !B64_RE.test(r.data)) throw new Error('respuesta_invalida');
+    const blob = b64ABlob(r.data);
+    memOrig.set(k, blob);
+    if (memOrig.size > MAX_ORIG) memOrig.delete(memOrig.keys().next().value);
+    return blob;
+  }).finally(() => enCursoOrig.delete(k));
+  enCursoOrig.set(k, p);
+  return p;
 }
 
 async function verOriginal(ticket, nro) {
-  const modal = $('fotoModal');
+  const lote = memLote.get(ticket);
+  const nros = (lote && lote.fotos ? lote.fotos.map(f => num(f.nro)).filter(n => n !== null) : [nro]);
+  vista = { ticket, nro, nros };
   const cuerpo = $('fotoModalCuerpo');
   const desc = $('fotoModalDescargar');
-  $('fotoModalTitulo').textContent = `${ticket}-${nn(nro)} · original`;
+  $('fotoModalTitulo').textContent = `${ticket}-${nn(nro)} · cargando máxima calidad…`;
   desc.classList.add('hidden');
-  cuerpo.innerHTML = '<p><span class="spinner"></span> Descargando la foto en máxima calidad…</p>';
-  modal.classList.add('open');
+  $('fotoModal').classList.add('open');
+
+  // Al instante: la miniatura agrandada mientras baja el original.
+  const mini = dataJpeg(memMinis.get(`${ticket}-${nro}`));
+  if (mini) {
+    const prev = document.createElement('img');
+    prev.src = mini; prev.alt = 'Vista previa'; prev.style.filter = 'blur(1px)'; prev.style.width = '100%';
+    cuerpo.replaceChildren(prev);
+  } else {
+    cuerpo.innerHTML = '<p><span class="spinner"></span> Descargando la foto en máxima calidad…</p>';
+  }
+
   try {
     const blob = await bajarOriginal(ticket, nro);
+    if (!vista || vista.ticket !== ticket || vista.nro !== nro) return; // ya cambió de foto
     if (urlOriginal) URL.revokeObjectURL(urlOriginal);
     urlOriginal = URL.createObjectURL(blob);
     const img = document.createElement('img');
     img.src = urlOriginal; img.alt = 'Original';
     img.addEventListener('load', () => {
-      $('fotoModalTitulo').textContent = `${ticket}-${nn(nro)} · ${img.naturalWidth}×${img.naturalHeight} · ${(blob.size / 1048576).toFixed(1)} MB`;
+      if (vista && vista.nro === nro) $('fotoModalTitulo').textContent = `${ticket}-${nn(nro)} · ${img.naturalWidth}×${img.naturalHeight} · ${(blob.size / 1048576).toFixed(1)} MB`;
     });
     cuerpo.replaceChildren(img);
     desc.href = urlOriginal;
     desc.download = `${ticket}-${nn(nro)}.jpg`;
     desc.classList.remove('hidden');
+    // Adelanta la siguiente foto en segundo plano.
+    const sig = nros[nros.indexOf(nro) + 1];
+    if (sig !== undefined) bajarOriginal(ticket, sig).catch(() => {});
   } catch (e) {
-    cuerpo.innerHTML = `<p class="error-msg" style="color:var(--red);">${msg(e)}</p>`;
+    if (vista && vista.nro === nro) cuerpo.innerHTML = `<p class="error-msg" style="color:var(--red);">${msg(e)}</p>`;
   }
 }
 
+function moverFoto(paso) {
+  if (!vista || !$('fotoModal').classList.contains('open')) return;
+  const i = vista.nros.indexOf(vista.nro) + paso;
+  if (i >= 0 && i < vista.nros.length) verOriginal(vista.ticket, vista.nros[i]);
+}
+
 function cerrarFoto() {
+  vista = null;
   $('fotoModal').classList.remove('open');
   $('fotoModalCuerpo').replaceChildren();
   if (urlOriginal) { URL.revokeObjectURL(urlOriginal); urlOriginal = null; }
 }
 $('btnCerrarFoto').addEventListener('click', cerrarFoto);
+$('btnFotoAnterior').addEventListener('click', () => moverFoto(-1));
+$('btnFotoSiguiente').addEventListener('click', () => moverFoto(1));
 $('fotoModal').addEventListener('click', (e) => { if (e.target === $('fotoModal')) cerrarFoto(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { cerrarFoto(); cerrarEscaner(); } });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { cerrarFoto(); cerrarEscaner(); }
+  if (e.key === 'ArrowLeft') moverFoto(-1);
+  if (e.key === 'ArrowRight') moverFoto(1);
+});
 
 /* Exportar ZIP ---------------------------------------------------------- */
 
@@ -408,15 +511,14 @@ async function exportarZip(lote, fotos) {
   btn.disabled = true;
   try {
     const zip = new JSZip();
-    let i = 0;
-    for (const f of fotos) {
-      const nro = num(f.nro);
-      if (nro === null) continue;
-      btn.textContent = `Descargando ${++i}/${fotos.length}…`;
+    const nros = fotos.map(f => num(f.nro)).filter(n => n !== null);
+    let hechas = 0;
+    btn.textContent = `Descargando 0/${nros.length}…`;
+    await enParalelo(nros, 3, async (nro) => {
       zip.file(`${lote.ticket}-${nn(nro)}.jpg`, await bajarOriginal(lote.ticket, nro), { compression: 'STORE' });
-    }
-    const meta = { ...lote };
-    zip.file('metadata.json', JSON.stringify(meta, null, 2));
+      btn.textContent = `Descargando ${++hechas}/${nros.length}…`;
+    });
+    zip.file('metadata.json', JSON.stringify(lote, null, 2));
     btn.textContent = 'Generando ZIP…';
     const content = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(content);
