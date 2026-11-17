@@ -285,7 +285,17 @@ async function capturarFoto(qrTexto) {
       blob = await canvasToBlob(canvas, q);
       if (blob && blob.size <= FOTO_MAX_BYTES) break;
     }
-    return blob ? { blob, width: canvas.width, height: canvas.height, fuente: fuente.fuente } : null;
+    if (!blob) return null;
+    // Miniatura liviana (~30-60 KB) solo para previsualizar en el panel admin.
+    const k = Math.min(1, 480 / Math.max(canvas.width, canvas.height));
+    const mc = document.createElement('canvas');
+    mc.width = Math.round(canvas.width * k);
+    mc.height = Math.round(canvas.height * k);
+    const mctx = mc.getContext('2d');
+    mctx.imageSmoothingQuality = 'high';
+    mctx.drawImage(canvas, 0, 0, mc.width, mc.height);
+    const mini = await canvasToBlob(mc, 0.8);
+    return { blob, mini, width: canvas.width, height: canvas.height, fuente: fuente.fuente };
   } finally {
     fuente.liberar();
   }
@@ -407,10 +417,11 @@ async function subirLote() {
       const hechas = state.subidas.size;
       log.textContent = `Subiendo foto ${hechas + 1} de ${total} (${(foto.blob.size / 1048576).toFixed(1)} MB)…`;
       const data = await blobABase64(foto.blob);
+      const mini = foto.mini ? await blobABase64(foto.mini) : '';
       await conReintentos(() => llamarServidor({
         accion: 'subirFoto', ticket: state.ticketCode, token: state.token,
         nro: foto.shotNumber, capturedAt: foto.capturedAt,
-        width: foto.width, height: foto.height, fuente: foto.fuente, data
+        width: foto.width, height: foto.height, fuente: foto.fuente, data, mini
       }));
       state.subidas.add(foto.shotNumber);
       pintar(state.subidas.size);

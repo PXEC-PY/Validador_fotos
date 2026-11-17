@@ -41,7 +41,17 @@ Hacelo con la cuenta de Google donde querés que queden las fotos (la de los 200
 5. Pasame esa URL (o pegala vos en `APPS_SCRIPT_URL` dentro de [`../config.js`](../config.js))
    y se publica el sitio.
 
-## 5. Usar el panel admin
+## 5. Crear tu usuario del panel admin
+
+1. Abrí la planilla (recargala si no ves el menú **Validador**).
+2. **Validador > Crear o cambiar usuario admin**: elegí un usuario (ej. `francesco`) y una
+   contraseña de **al menos 12 caracteres**.
+3. Entrá a **https://pxec-py.github.io/Validador_fotos/admin.html** con ese usuario.
+
+Repetí para cada persona que revise. Para quitarle el acceso a alguien:
+**Validador > Borrar usuario admin** (sus sesiones abiertas se cortan).
+
+## 6. (Alternativa) Panel dentro de la planilla
 
 1. Abrí la planilla. Si no ves el menú **Validador**, recargá la página.
 2. En la hoja **Lotes**, hacé click en cualquier celda de un lote.
@@ -54,7 +64,7 @@ Hacelo con la cuenta de Google donde querés que queden las fotos (la de los 200
 También podés filtrar la hoja **Lotes** por estado, agente o patente con los filtros
 normales de Sheets.
 
-## Si cambiás el código más adelante
+## Si cambiás el código más adelante (actualizaciones)
 
 Pegás el código nuevo y vas a **Implementar > Gestionar implementaciones > (lápiz) >
 Versión: Nueva versión > Implementar**. Así la URL `/exec` **no cambia** y no hay que

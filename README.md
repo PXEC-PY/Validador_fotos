@@ -24,6 +24,11 @@ Celular del broker                      Tu cuenta de Google
   en Android, cuadro 4K en iPhone), hasta 4096 px y JPEG 0.95, con el QR `TICKET-NN`
   quemado. La subida muestra progreso, reintenta sola y permite "Reintentar subida" sin
   duplicar fotos.
+- `admin.html` + `admin.js` — **panel admin** (`https://pxec-py.github.io/Validador_fotos/admin.html`):
+  usuario y contraseña propios, lista de lotes con búsqueda y filtros, miniaturas, foto
+  original en máxima calidad, aprobar/rechazar con nota, ZIP con los originales y
+  **escáner del QR** de una foto para verificarla contra la base. Los usuarios se crean
+  desde la Planilla: **Validador > Crear o cambiar usuario admin**.
 - `config.js` — URL del Apps Script y parámetros de calidad.
 - `apps-script/` — el código que va dentro de tu cuenta de Google (receptor + panel
   admin). **Instalación paso a paso: [apps-script/README.md](apps-script/README.md).**
@@ -61,13 +66,13 @@ a propósito (los brokers no tienen cuenta); toda la seguridad está del lado de
 
 | OWASP | Riesgo | Qué se hizo |
 |---|---|---|
-| A01 Control de acceso | Ver o tocar lotes ajenos | El endpoint público **solo puede crear lotes y agregar fotos**; no tiene ninguna función para leer o listar. Leer, revisar y aprobar se hace solo desde la Planilla, con tu login de Google. |
+| A01 Control de acceso | Ver o tocar lotes ajenos | Sin sesión, el endpoint **solo puede crear lotes y agregar fotos** (con el token de ese lote). Leer, ver fotos, revisar y verificar QR exige sesión de admin válida. |
 | A02 Criptografía | Ticket adivinable / subir a lotes ajenos | Ticket y **token secreto por lote** generados en el servidor (aleatorio seguro). En la planilla se guarda solo el hash SHA-256 del token; comparación en tiempo constante. |
 | A03 Inyección | XSS en el panel, fórmulas en la planilla, archivos maliciosos | El panel pinta todo con `textContent`. Los textos que empiezan con `= + - @` se neutralizan (inyección de fórmulas en Sheets). Solo se aceptan **JPEG reales** (se revisan los bytes) y el nombre del archivo lo arma el servidor. |
 | A04 Diseño | Abuso / llenar el Drive | Máx. 20 fotos y 15 MB por foto, solo con el lote pendiente y dentro de las 2 h; tope global de 120 lotes por hora. |
 | A05 Configuración | Clickjacking, scripts inyectados | CSP estricta sin scripts inline, `object-src 'none'`, bloqueo de iframes. |
 | A06 Componentes | Librerías con fallas | Versiones fijas de qrcode y jszip. |
-| A07 Autenticación | — | No hay contraseñas propias: el admin usa la autenticación de Google (activá la verificación en dos pasos en esa cuenta). |
+| A07 Autenticación | Fuerza bruta, sesiones eternas | Contraseñas de admin con sal + 3000 rondas HMAC-SHA256 (nunca en texto plano, mínimo 12 caracteres); bloqueo 15 min tras 5 fallos y tope global por hora; mismo mensaje para usuario o clave incorrectos; sesión aleatoria de 256 bits que vence a los 30 min sin uso (máx. 8 h) y vive solo en la pestaña. La Planilla sigue protegida por el login de Google (activá verificación en dos pasos). |
 | A08 Integridad | CDN comprometido | Subresource Integrity (`sha384`) en los scripts de jsDelivr. |
 | A09 Registro | Trazabilidad | Cada lote guarda hora del servidor, user-agent, quién revisó y cuándo; cada foto, su SHA-256 (cadena de custodia). |
 | A10 SSRF | — | No aplica: el servidor no descarga URLs. |
