@@ -7,7 +7,7 @@
 // URL de la "Aplicación web" del Apps Script (termina en /exec).
 // No es secreta: es la dirección a la que los celulares mandan las fotos.
 // Toda la validación se hace del lado de Google (apps-script/Codigo.gs).
-export const APPS_SCRIPT_URL = "";
+export const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4Y1ujPtgPpokt-FEI8kB168jSMK_BBIvir9FoqMi9tZ3NE5EeN6P3Jh2wZwNpwNRG/exec";
 
 // Máximo de fotos por lote (tiene que coincidir con CONFIG.MAX_FOTOS en Codigo.gs).
 export const MAX_FOTOS = 20;

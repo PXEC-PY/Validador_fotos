@@ -338,7 +338,7 @@ const DEFINITIVOS = new Set(['no_autorizado', 'lote_cerrado', 'lote_vencido', 'm
 // POST al Apps Script. Se manda como text/plain para que sea un "pedido
 // simple" (sin preflight CORS, que Apps Script no soporta). Google responde
 // con una redirección a script.googleusercontent.com que el navegador sigue.
-function llamarServidor(cuerpo, onProgress) {
+function llamarServidor(cuerpo) {
   return new Promise((resolve, reject) => {
     if (!APPS_SCRIPT_URL || !APPS_SCRIPT_URL.startsWith('https://script.google.com/')) {
       return reject(new Error('sin_configurar'));
@@ -347,7 +347,9 @@ function llamarServidor(cuerpo, onProgress) {
     xhr.open('POST', APPS_SCRIPT_URL);
     xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
     xhr.timeout = 300000;
-    if (onProgress) xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    // OJO: no usar xhr.upload.onprogress. Escuchar el progreso de subida
+    // obliga al navegador a mandar un "preflight" CORS (OPTIONS) que Apps
+    // Script no responde, y la subida falla con "error de red".
     xhr.onload = () => {
       let data = null;
       try { data = JSON.parse(xhr.responseText); } catch (_) { /* abajo */ }
@@ -409,7 +411,7 @@ async function subirLote() {
         accion: 'subirFoto', ticket: state.ticketCode, token: state.token,
         nro: foto.shotNumber, capturedAt: foto.capturedAt,
         width: foto.width, height: foto.height, fuente: foto.fuente, data
-      }, (p) => pintar(hechas, p)));
+      }));
       state.subidas.add(foto.shotNumber);
       pintar(state.subidas.size);
     }
