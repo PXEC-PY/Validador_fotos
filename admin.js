@@ -19,6 +19,7 @@ if (window.top !== window.self) {
 const $ = (id) => document.getElementById(id);
 const INACTIVIDAD_MS = 30 * 60 * 1000;
 const CLAVE_SESION = 'validador_admin_sesion';
+const CLAVE_ROL = 'validador_admin_rol';
 
 const state = { lotes: [], selected: null, statusFilter: 'todos', search: '', usuario: '' };
 
@@ -34,6 +35,8 @@ const B64_RE = /^[A-Za-z0-9+/=]+$/;
 const dataJpeg = (b64) => (typeof b64 === 'string' && B64_RE.test(b64) ? 'data:image/jpeg;base64,' + b64 : null);
 
 function sesionGuardada() { try { return sessionStorage.getItem(CLAVE_SESION) || ''; } catch (_) { return ''; } }
+function rolGuardado() { try { return sessionStorage.getItem(CLAVE_ROL) || 'admin'; } catch (_) { return 'admin'; } }
+function guardarRol(r) { try { r ? sessionStorage.setItem(CLAVE_ROL, r) : sessionStorage.removeItem(CLAVE_ROL); } catch (_) { /* sin storage */ } }
 function guardarSesion(t) { try { t ? sessionStorage.setItem(CLAVE_SESION, t) : sessionStorage.removeItem(CLAVE_SESION); } catch (_) { /* sin storage */ } }
 
 // POST como text/plain (pedido simple, sin preflight CORS que Apps Script no soporta).
@@ -65,6 +68,7 @@ const MENSAJES = {
   bloqueado: 'Demasiados intentos fallidos. Esperá 15 minutos.',
   conexion: 'No hay conexión con el servidor. Revisá internet.',
   no_encontrado: 'No se encontró.',
+  prohibido: 'Tu usuario no tiene permiso para esto.',
   sesion_invalida: 'Tu sesión venció.'
 };
 const msg = (e) => MENSAJES[e && e.message] || 'Ocurrió un error (' + esc(e && e.message) + ').';
@@ -86,8 +90,10 @@ async function login() {
   $('btnLogin').disabled = true;
   $('btnLogin').textContent = 'Ingresando…';
   try {
-    const r = await api({ accion: 'adminLogin', usuario, clave });
+    const ip = await ipPublica();
+    const r = await api({ accion: 'adminLogin', usuario, clave, ip, ua: navigator.userAgent.slice(0, 300) });
     guardarSesion(r.sesion);
+    guardarRol(r.rol);
     state.usuario = r.usuario;
     $('passInput').value = '';
     entrar();
@@ -99,7 +105,23 @@ async function login() {
   }
 }
 
+// IP pública según el navegador (Google Apps Script no la recibe). Solo para
+// el registro de actividad: si el servicio no responde en 3 s, se sigue sin ella.
+async function ipPublica() {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 3000);
+    const r = await fetch('https://api.ipify.org?format=json', { signal: ctrl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
+    clearTimeout(t);
+    const j = await r.json();
+    return typeof j.ip === 'string' && /^[0-9a-fA-F:.]{3,45}$/.test(j.ip) ? j.ip : '';
+  } catch (_) {
+    return '';
+  }
+}
+
 function entrar() {
+  $('btnRegistro').classList.toggle('hidden', rolGuardado() !== 'superadmin');
   mostrar('panel');
   reiniciarInactividad();
   cargarLotes();
@@ -107,6 +129,8 @@ function entrar() {
 
 function cerrarSesionLocal(aviso) {
   guardarSesion('');
+  guardarRol('');
+  cerrarAuditoria();
   state.lotes = []; state.selected = null;
   limpiarMemoria();
   clearTimeout(idleTimer);
@@ -319,6 +343,11 @@ function pintarDetalle(lote) {
         </table>
         <div class="btn-row" style="margin-top:6px;"><a class="link-btn" href="https://www.google.com/maps?q=${encodeURIComponent(lat + ',' + lng)}" target="_blank" rel="noopener noreferrer">Ver en el mapa</a></div>`
         : '<p class="no-data">Sin datos de ubicación.</p>'}
+      <div class="zona-peligro">
+        <h3>Eliminar lote</h3>
+        <p>Borra el lote y todas sus fotos. Las fotos van a la papelera de Google Drive (se pueden recuperar durante 30 días). Queda registrado quién lo eliminó.</p>
+        <button class="btn danger" id="btnEliminarLote" type="button">Eliminar este lote</button>
+      </div>
     </div>`;
 
   $('adminNota').value = typeof lote.nota === 'string' ? lote.nota : '';
@@ -351,6 +380,31 @@ function pintarDetalle(lote) {
   $('btnAprobar').addEventListener('click', () => revisar(lote.ticket, 'aprobado'));
   $('btnRechazar').addEventListener('click', () => revisar(lote.ticket, 'rechazado'));
   $('btnExportZip').addEventListener('click', () => exportarZip(lote, fotos));
+  $('btnEliminarLote').addEventListener('click', () => eliminarLote(lote));
+}
+
+async function eliminarLote(lote) {
+  const fotos = (lote.fotos || []).length;
+  const aviso = '¿Eliminar el lote ' + lote.ticket + '?\n\n' + (lote.agente || 'sin nombre') + ' · ' + fotos +
+    ' foto(s).\n\nLas fotos van a la papelera de Drive (recuperables 30 días).';
+  if (!confirm(aviso)) return;
+  const btn = $('btnEliminarLote');
+  btn.disabled = true;
+  btn.textContent = 'Eliminando…';
+  try {
+    await apiAdmin('adminEliminarLote', { ticket: lote.ticket });
+    state.lotes = state.lotes.filter(l => l.ticket !== lote.ticket);
+    memLote.delete(lote.ticket);
+    [...memMinis.keys(), ...memOrig.keys()].forEach(k => { if (k.startsWith(lote.ticket + '-')) { memMinis.delete(k); memOrig.delete(k); } });
+    state.selected = null;
+    renderList();
+    $('detailContent').innerHTML = '<div class="detail__empty">Lote ' + esc(lote.ticket) + ' eliminado.</div>';
+    $('detailPanel').classList.remove('open');
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Eliminar este lote';
+    alert('No se pudo eliminar: ' + (MENSAJES[e && e.message] || (e && e.message)));
+  }
 }
 
 function ponerMini(ticket, nro, textoSiFalta) {
@@ -552,6 +606,53 @@ async function exportarZip(lote, fotos) {
     btn.textContent = original;
   }
 }
+
+/* Registro de actividad (solo superadmin) -------------------------------- */
+
+let eventosAudit = [];
+const NOMBRES_EVENTO = {
+  login_ok: 'Inicio de sesión', login_fallido: 'Inicio fallido', login_bloqueado: 'Bloqueado',
+  logout: 'Cierre de sesión', revisar: 'Revisión', eliminar_lote: 'Lote eliminado',
+  acceso_denegado: 'Acceso denegado', admin_creado: 'Admin creado', admin_modificado: 'Admin modificado',
+  admin_borrado: 'Admin borrado', rol_cambiado: 'Rol cambiado'
+};
+
+async function abrirAuditoria() {
+  $('auditModal').classList.add('open');
+  $('auditCuerpo').innerHTML = '<p><span class="spinner"></span> Cargando registro…</p>';
+  try {
+    const r = await apiAdmin('adminAuditoria');
+    eventosAudit = Array.isArray(r.eventos) ? r.eventos : [];
+    pintarAuditoria();
+  } catch (e) {
+    $('auditCuerpo').innerHTML = '<p class="error-msg" style="color:var(--red);">' + msg(e) + '</p>';
+  }
+}
+
+function pintarAuditoria() {
+  const q = $('auditBuscar').value.trim().toLowerCase();
+  const filas = eventosAudit.filter(e => !q || [e.usuario, e.evento, NOMBRES_EVENTO[e.evento], e.detalle, e.ip]
+    .some(v => String(v || '').toLowerCase().includes(q)));
+  if (!filas.length) { $('auditCuerpo').innerHTML = '<p class="no-data">Sin eventos.</p>'; return; }
+  const cuerpo = filas.map(e => '<tr>' +
+    '<td class="mono">' + esc(fmt(e.fecha)) + '</td>' +
+    '<td>' + esc(e.usuario) + '</td>' +
+    '<td class="ev-' + esc(String(e.evento).replace(/[^a-z_]/g, '')) + '">' + esc(NOMBRES_EVENTO[e.evento] || e.evento) + '</td>' +
+    '<td>' + esc(e.detalle) + '</td>' +
+    '<td class="mono">' + esc(String(e.ip || '').replace(/^'/, '') || '—') + '</td>' +
+    '<td style="font-size:10.5px; color:var(--text-faint); max-width:260px;">' + esc(e.navegador) + '</td>' +
+    '</tr>').join('');
+  $('auditCuerpo').innerHTML = '<table class="audit-tabla"><thead><tr><th>Fecha y hora</th><th>Usuario</th><th>Evento</th>' +
+    '<th>Detalle</th><th>IP</th><th>Navegador</th></tr></thead><tbody>' + cuerpo + '</tbody></table>';
+}
+
+function cerrarAuditoria() { $('auditModal').classList.remove('open'); eventosAudit = []; }
+
+$('btnRegistro').addEventListener('click', abrirAuditoria);
+$('btnAuditRecargar').addEventListener('click', abrirAuditoria);
+$('btnCerrarAudit').addEventListener('click', cerrarAuditoria);
+$('auditBuscar').addEventListener('input', pintarAuditoria);
+$('auditModal').addEventListener('click', (e) => { if (e.target === $('auditModal')) cerrarAuditoria(); });
 
 /* Escáner QR ------------------------------------------------------------ */
 

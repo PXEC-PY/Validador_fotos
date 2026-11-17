@@ -30,6 +30,12 @@ Celular del broker                      Tu cuenta de Google
   original en máxima calidad, aprobar/rechazar con nota, ZIP con los originales y
   **escáner del QR** de una foto para verificarla contra la base. Los usuarios se crean
   desde la Planilla: **Validador > Crear o cambiar usuario admin**.
+  - **Roles:** *superadmin* (todo + **Registro de actividad**: inicios de sesión correctos y
+    fallidos, cierres, revisiones y eliminaciones, con fecha/hora del servidor, IP informada
+    por el navegador y navegador) y *admin* (todo menos el registro). Se asignan desde
+    **Validador > Cambiar rol**. El registro también queda en la hoja **Auditoria**.
+  - **Eliminar lote:** manda la carpeta a la papelera de Drive (recuperable 30 días),
+    quita las filas y queda registrado quién lo hizo.
 - `config.js` — URL del Apps Script y parámetros de calidad.
 - `apps-script/` — el código que va dentro de tu cuenta de Google (receptor + panel
   admin). **Instalación paso a paso: [apps-script/README.md](apps-script/README.md).**
@@ -75,7 +81,7 @@ a propósito (los brokers no tienen cuenta); toda la seguridad está del lado de
 | A06 Componentes | Librerías con fallas | Versiones fijas de qrcode y jszip. |
 | A07 Autenticación | Fuerza bruta, sesiones eternas | Contraseñas de admin con sal + 3000 rondas HMAC-SHA256 (nunca en texto plano, mínimo 12 caracteres); bloqueo 15 min tras 5 fallos y tope global por hora; mismo mensaje para usuario o clave incorrectos; sesión aleatoria de 256 bits que vence a los 30 min sin uso (máx. 8 h) y vive solo en la pestaña. La Planilla sigue protegida por el login de Google (activá verificación en dos pasos). |
 | A08 Integridad | CDN comprometido | Subresource Integrity (`sha384`) en los scripts de jsDelivr. |
-| A09 Registro | Trazabilidad | Cada lote guarda hora del servidor, user-agent, quién revisó y cuándo; cada foto, su SHA-256 (cadena de custodia). |
+| A09 Registro | Trazabilidad | Hoja **Auditoria** con inicios de sesión (correctos, fallidos y bloqueados), cierres, revisiones, eliminaciones, cambios de usuarios/roles y accesos denegados; visible solo para superadmin. Cada lote guarda hora del servidor, user-agent, quién revisó y cuándo; cada foto su SHA-256, que el admin verifica al abrir el original. |
 | A10 SSRF | — | No aplica: el servidor no descarga URLs. |
 
 **Riesgos residuales (conocidos y aceptados):**

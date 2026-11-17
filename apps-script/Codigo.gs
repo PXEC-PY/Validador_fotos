@@ -76,6 +76,8 @@ function doPost(e) {
       case 'adminOriginal': return json_(adminOriginal_(body));
       case 'adminRevisar': return json_(adminRevisar_(body));
       case 'adminVerificar': return json_(adminVerificar_(body));
+      case 'adminEliminarLote': return json_(adminEliminarLote_(body));
+      case 'adminAuditoria': return json_(adminAuditoria_(body));
       default: return json_({ ok: false, error: 'accion_invalida' });
     }
   } catch (err) {
@@ -336,6 +338,7 @@ function onOpen() {
     .addItem('Ver fotos del lote seleccionado', 'abrirPanel')
     .addSeparator()
     .addItem('Crear o cambiar usuario admin', 'crearAdmin')
+    .addItem('Cambiar rol (admin / superadmin)', 'cambiarRolAdmin')
     .addItem('Borrar usuario admin', 'borrarAdmin')
     .addSeparator()
     .addItem('Configurar (primera vez)', 'configurar')
@@ -409,7 +412,11 @@ function adminLogin_(b) {
   const kU = 'fallos_u_' + sha256_(usuario);
   const kG = 'fallos_g_' + Utilities.formatDate(new Date(), 'UTC', 'yyyyMMddHH');
   const fU = Number(cache.get(kU) || 0), fG = Number(cache.get(kG) || 0);
-  if (fU >= 5 || fG >= 30) throw publico_('bloqueado');
+  const ip = ipValida_(b.ip), ua = texto_(b.ua, 300);
+  if (fU >= 5 || fG >= 30) {
+    auditar_(usuario, 'login_bloqueado', fG >= 30 ? 'tope global de intentos' : 'demasiados intentos para este usuario', ip, ua);
+    throw publico_('bloqueado');
+  }
 
   const reg = leerAdmins_()[usuario];
   // Se calcula el hash aunque el usuario no exista: mismo tiempo de respuesta.
@@ -417,17 +424,28 @@ function adminLogin_(b) {
   if (!reg || !igualSeguro_(hash, reg.hash)) {
     cache.put(kU, String(fU + 1), 900);
     cache.put(kG, String(fG + 1), 3700);
+    auditar_(usuario, 'login_fallido', reg ? 'contraseña incorrecta' : 'usuario inexistente', ip, ua);
     throw publico_('credenciales_invalidas');
   }
   cache.remove(kU);
   const token = tokenAleatorio_();
-  cache.put('ses_' + sha256_(token), JSON.stringify({ usuario: usuario, inicio: Date.now() }), SESION_INACTIVIDAD_S);
-  return { ok: true, sesion: token, usuario: usuario };
+  cache.put('ses_' + sha256_(token), JSON.stringify({ usuario: usuario, inicio: Date.now(), ip: ip, ua: ua }), SESION_INACTIVIDAD_S);
+  const rol = rolDe_(reg);
+  auditar_(usuario, 'login_ok', 'rol: ' + rol, ip, ua);
+  return { ok: true, sesion: token, usuario: usuario, rol: rol };
 }
 
 function adminLogout_(b) {
   const token = String(b.sesion || '');
-  if (/^[a-f0-9]{64}$/.test(token)) CacheService.getScriptCache().remove('ses_' + sha256_(token));
+  if (/^[a-f0-9]{64}$/.test(token)) {
+    const cache = CacheService.getScriptCache();
+    const k = 'ses_' + sha256_(token);
+    const v = cache.get(k);
+    if (v) {
+      try { const s = JSON.parse(v); auditar_(s.usuario, 'logout', '', s.ip, s.ua); } catch (_) { /* nada */ }
+      cache.remove(k);
+    }
+  }
   return { ok: true };
 }
 
@@ -439,11 +457,13 @@ function sesion_(b) {
   const v = cache.get(k);
   if (!v) throw publico_('sesion_invalida');
   const s = JSON.parse(v);
-  if (Date.now() - s.inicio > SESION_MAX_MS || !leerAdmins_()[s.usuario]) {
+  const reg = leerAdmins_()[s.usuario];
+  if (Date.now() - s.inicio > SESION_MAX_MS || !reg) {
     cache.remove(k);
     throw publico_('sesion_invalida');
   }
   cache.put(k, v, SESION_INACTIVIDAD_S); // renueva por actividad
+  s.rol = rolDe_(reg); // el rol se lee siempre del registro (un cambio aplica al instante)
   return s;
 }
 
@@ -523,6 +543,7 @@ function adminRevisar_(b) {
   } finally {
     lock.releaseLock();
   }
+  auditar_(s.usuario, 'revisar', ticket + ' → ' + estado, s.ip, s.ua);
   return { ok: true, lote: buscarLote_(ticket) };
 }
 
@@ -542,6 +563,97 @@ function adminVerificar_(b) {
   };
 }
 
+// Elimina un lote completo: su carpeta de Drive va a la papelera (se puede
+// recuperar 30 días desde Drive) y se quitan sus filas de la planilla.
+function adminEliminarLote_(b) {
+  const s = sesion_(b);
+  const ticket = ticketValido_(b.ticket);
+  const hoja = hoja_(HOJA_LOTES);
+  const cache = CacheService.getScriptCache();
+  const lock = LockService.getScriptLock();
+  let detalle = ticket;
+  lock.waitLock(25000);
+  try {
+    const nroFila = buscarFila_(hoja, ticket);
+    if (!nroFila) throw publico_('no_encontrado');
+    const v = hoja.getRange(nroFila, 1, 1, COL_LOTES.length).getValues()[0];
+    const col = (n) => v[COL_LOTES.indexOf(n)];
+    detalle = `${ticket} · ${col('agente')} · ${col('patente') || 'sin referencia'} · ${col('fotosRecibidas') || 0} fotos · estado ${col('estado')}`;
+    try { DriveApp.getFolderById(idDeCarpeta_(col('carpeta'))).setTrashed(true); }
+    catch (e) { console.error('No se pudo mandar a la papelera la carpeta de ' + ticket, e); }
+    // Filas de la hoja Fotos (de abajo hacia arriba, agrupando bloques seguidos).
+    const hF = hoja_(HOJA_FOTOS);
+    const ult = hF.getLastRow();
+    if (ult >= 2) {
+      const vals = hF.getRange(2, 1, ult - 1, 1).getValues();
+      let i = vals.length - 1;
+      while (i >= 0) {
+        if (vals[i][0] !== ticket) { i--; continue; }
+        let j = i;
+        while (j - 1 >= 0 && vals[j - 1][0] === ticket) j--;
+        hF.deleteRows(j + 2, i - j + 1);
+        i = j - 1;
+      }
+    }
+    hoja.deleteRow(nroFila);
+    const claves = ['fila_' + ticket, 'dirmini_' + ticket];
+    for (let n = 1; n <= CONFIG.MAX_NRO_FOTO; n++) claves.push(claveMini_(ticket, n));
+    cache.removeAll(claves);
+  } finally {
+    lock.releaseLock();
+  }
+  auditar_(s.usuario, 'eliminar_lote', detalle, s.ip, s.ua);
+  return { ok: true };
+}
+
+// Registro de actividad: solo superadmin.
+function adminAuditoria_(b) {
+  const s = sesion_(b);
+  if (s.rol !== 'superadmin') {
+    auditar_(s.usuario, 'acceso_denegado', 'intentó ver el registro de actividad', s.ip, s.ua);
+    throw publico_('prohibido');
+  }
+  const h = SpreadsheetApp.getActive().getSheetByName(HOJA_AUDIT);
+  if (!h || h.getLastRow() < 2) return { ok: true, eventos: [] };
+  const ult = h.getLastRow();
+  const desde = Math.max(2, ult - 499);
+  const filas = h.getRange(desde, 1, ult - desde + 1, COL_AUDIT.length).getValues();
+  const eventos = filas.reverse().map(r => ({
+    fecha: r[0] instanceof Date ? r[0].toISOString() : String(r[0]),
+    usuario: String(r[1]), evento: String(r[2]), detalle: String(r[3]), ip: String(r[4]), navegador: String(r[5])
+  }));
+  return { ok: true, eventos: eventos };
+}
+
+const HOJA_AUDIT = 'Auditoria';
+const COL_AUDIT = ['fecha', 'usuario', 'evento', 'detalle', 'ip (informada por el navegador)', 'navegador'];
+
+function auditar_(usuario, evento, detalle, ip, ua) {
+  try {
+    const ss = SpreadsheetApp.getActive();
+    let h = ss.getSheetByName(HOJA_AUDIT);
+    if (!h) {
+      h = ss.insertSheet(HOJA_AUDIT);
+      h.getRange(1, 1, 1, COL_AUDIT.length).setValues([COL_AUDIT]).setFontWeight('bold');
+      h.setFrozenRows(1);
+    }
+    h.appendRow([new Date(), seguroCelda_(texto_(usuario, 60)), evento, seguroCelda_(texto_(detalle, 300)),
+      ip ? "'" + ip : '', seguroCelda_(texto_(ua, 300))]);
+  } catch (e) {
+    console.error('No se pudo registrar en auditoría', e);
+  }
+}
+
+// IP que informa el navegador (Apps Script no recibe la IP real del cliente).
+function ipValida_(ip) {
+  const s = String(ip || '').trim();
+  if (/^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(s)) return s;
+  if (/^[0-9a-fA-F:]{3,39}$/.test(s) && s.indexOf(':') >= 0) return s.toLowerCase();
+  return '';
+}
+
+function rolDe_(reg) { return reg && reg.rol === 'superadmin' ? 'superadmin' : 'admin'; }
+
 /* --- usuarios admin (se gestionan desde el menú de la Planilla) --- */
 
 function crearAdmin() {
@@ -555,10 +667,30 @@ function crearAdmin() {
   const clave = r2.getResponseText();
   if (clave.length < 12) { ui.alert('La contraseña debe tener al menos 12 caracteres.'); return; }
   const admins = leerAdmins_();
+  const previo = admins[usuario];
+  const r3 = ui.alert('Rol de "' + usuario + '"', '¿Es SUPERADMIN? (ve el registro de actividad)\n\nSí = superadmin · No = admin común', ui.ButtonSet.YES_NO);
+  const rol = r3 === ui.Button.YES ? 'superadmin' : 'admin';
   const salt = tokenAleatorio_().slice(0, 32);
-  admins[usuario] = { salt: salt, hash: hashClave_(clave, salt), creado: new Date().toISOString() };
+  admins[usuario] = { salt: salt, hash: hashClave_(clave, salt), rol: rol, creado: previo && previo.creado ? previo.creado : new Date().toISOString() };
   PropertiesService.getScriptProperties().setProperty('ADMINS', JSON.stringify(admins));
-  ui.alert('Listo: el usuario "' + usuario + '" ya puede entrar a admin.html.');
+  auditar_(Session.getActiveUser().getEmail() || 'planilla', previo ? 'admin_modificado' : 'admin_creado', usuario + ' · rol ' + rol, '', 'menú de la planilla');
+  ui.alert('Listo: "' + usuario + '" (' + rol + ') ya puede entrar a admin.html.');
+}
+
+function cambiarRolAdmin() {
+  const ui = SpreadsheetApp.getUi();
+  const admins = leerAdmins_();
+  const lista = Object.keys(admins).map(u => u + ' (' + rolDe_(admins[u]) + ')');
+  if (!lista.length) { ui.alert('No hay usuarios admin.'); return; }
+  const r = ui.prompt('Cambiar rol', 'Usuarios: ' + lista.join(', ') + '\n\nEscribí el usuario:', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  const u = r.getResponseText().trim().toLowerCase();
+  if (!admins[u]) { ui.alert('Ese usuario no existe.'); return; }
+  const r2 = ui.alert('Rol de "' + u + '"', '¿Lo hacemos SUPERADMIN?\n\nSí = superadmin · No = admin común', ui.ButtonSet.YES_NO);
+  admins[u].rol = r2 === ui.Button.YES ? 'superadmin' : 'admin';
+  PropertiesService.getScriptProperties().setProperty('ADMINS', JSON.stringify(admins));
+  auditar_(Session.getActiveUser().getEmail() || 'planilla', 'rol_cambiado', u + ' → ' + admins[u].rol, '', 'menú de la planilla');
+  ui.alert('Listo: "' + u + '" ahora es ' + admins[u].rol + '.');
 }
 
 function borrarAdmin() {
@@ -572,6 +704,7 @@ function borrarAdmin() {
   if (!admins[u]) { ui.alert('Ese usuario no existe.'); return; }
   delete admins[u];
   PropertiesService.getScriptProperties().setProperty('ADMINS', JSON.stringify(admins));
+  auditar_(Session.getActiveUser().getEmail() || 'planilla', 'admin_borrado', u, '', 'menú de la planilla');
   ui.alert('Usuario "' + u + '" borrado (sus sesiones abiertas dejan de valer).');
 }
 
