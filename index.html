@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://res.cloudinary.com; media-src 'self' blob: mediastream:; connect-src 'self' https://api.cloudinary.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com; frame-src https://validador-fotos-44f0a.firebaseapp.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Validador de fotos del vehículo — La Meridional Paraguaya S.A. de Seguros</title>
 <link rel="icon" href="logo.png">
 <link rel="stylesheet" href="shared.css">
@@ -90,9 +92,15 @@
       <h1>Fotos del vehículo</h1>
       <p>Vamos a tomar hasta <strong id="maxFotosLabel">20</strong> fotos del vehículo directamente desde la cámara de este dispositivo. También vamos a registrar tu ubicación actual. Ninguno de los dos datos se puede cargar a mano: se toman en el momento, desde el navegador.</p>
       <div class="field">
-        <label for="patenteInput">Patente del vehículo (opcional, ayuda a identificar el lote)</label>
-        <input type="text" id="patenteInput" placeholder="AA123BB" autocomplete="off">
+        <label for="agenteInput">Agente / broker que envía las fotos</label>
+        <input type="text" id="agenteInput" placeholder="Nombre y apellido, o agencia" autocomplete="name" maxlength="80" required>
       </div>
+      <div class="field">
+        <label for="patenteInput">Patente del vehículo (opcional, ayuda a identificar el lote)</label>
+        <input type="text" id="patenteInput" placeholder="AA123BB" autocomplete="off" maxlength="12">
+      </div>
+      <div id="inicioError" class="error-msg"></div>
+      <p style="font-size:12px;">Las fotos se guardan en máxima calidad (resolución completa de la cámara). Con datos móviles la subida puede tardar unos minutos: conviene usar Wi-Fi.</p>
       <div class="actions">
         <button class="btn primary" id="btnComenzar" type="button">Comenzar</button>
       </div>
@@ -135,6 +143,9 @@
       <div class="progress-bar"><div class="progress-bar__fill" id="subProgressFill"></div></div>
       <div class="progress-label" id="subProgressLabel">0 / 0</div>
       <div class="upload-log" id="subLog"></div>
+      <div class="actions hidden" id="reintentarRow">
+        <button class="btn primary" id="btnReintentarSubida" type="button">Reintentar subida</button>
+      </div>
     </section>
 
     <!-- 5. Ticket -->
@@ -168,397 +179,8 @@
   </footer>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script type="module">
-import { auth, db, MAX_FOTOS, CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from './firebase-config.js';
-import { signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { collection, doc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
-
-document.getElementById('maxFotosLabel').textContent = String(MAX_FOTOS);
-document.getElementById('fotoCounter').textContent = `0 / ${MAX_FOTOS}`;
-
-const state = {
-  patente: '',
-  ubicacion: null,   // { lat, lng, accuracy, capturedAt }
-  fotos: [],          // [{ blob, dataUrl, capturedAt, shotNumber }]
-  nextShotNumber: 1,
-  stream: null,
-  loteId: null,
-  ticketCode: null
-};
-
-const screens = ['screenInicio', 'screenUbicacion', 'screenCamara', 'screenSubiendo', 'screenTicket'];
-const stepBadge = document.getElementById('stepBadge');
-const stepLabels = { screenInicio: 'paso 1 / 4', screenUbicacion: 'paso 2 / 4', screenCamara: 'paso 3 / 4', screenSubiendo: 'subiendo…', screenTicket: 'listo' };
-
-function showScreen(id) {
-  for (const s of screens) document.getElementById(s).classList.toggle('active', s === id);
-  stepBadge.textContent = stepLabels[id] || '';
-}
-
-/* ---------------------------------------------------------------------- */
-/* 1. Inicio                                                               */
-/* ---------------------------------------------------------------------- */
-
-document.getElementById('btnComenzar').addEventListener('click', () => {
-  state.patente = document.getElementById('patenteInput').value.trim();
-  showScreen('screenUbicacion');
-  solicitarUbicacion();
-});
-
-/* ---------------------------------------------------------------------- */
-/* 2. Ubicación                                                            */
-/* ---------------------------------------------------------------------- */
-
-function renderUbicEstado(msg, tone) {
-  const box = document.getElementById('ubicEstado');
-  box.innerHTML = '';
-  const div = document.createElement('div');
-  div.className = 'card status-box' + (tone ? ' ' + tone : '');
-  div.innerHTML = msg;
-  box.appendChild(div);
-}
-
-function calificarPrecision(accuracy) {
-  if (accuracy <= 50) return { tone: 'ok', texto: 'Precisión buena' };
-  if (accuracy <= 150) return { tone: 'warn', texto: 'Precisión moderada — si podés, reintentá al aire libre' };
-  return { tone: 'bad', texto: 'Precisión baja — te recomendamos reintentar' };
-}
-
-function solicitarUbicacion() {
-  document.getElementById('btnConfirmarUbic').disabled = true;
-  renderUbicEstado('<span class="spinner"></span> Obteniendo tu ubicación…', null);
-
-  if (!('geolocation' in navigator)) {
-    renderUbicEstado('Este navegador no soporta geolocalización. Probá desde otro dispositivo o navegador.', 'bad');
-    return;
-  }
-
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      const { latitude, longitude, accuracy } = pos.coords;
-      state.ubicacion = { lat: latitude, lng: longitude, accuracy, capturedAt: Date.now() };
-      const cal = calificarPrecision(accuracy);
-      renderUbicEstado(`
-        <div>
-          <div><strong>Ubicación detectada</strong></div>
-          <div class="mono" style="font-size:12.5px; margin-top:4px;">${latitude.toFixed(6)}, ${longitude.toFixed(6)}</div>
-          <div class="ubic-precision">${cal.texto} (±${Math.round(accuracy)} m)</div>
-          <div class="btn-row" style="margin-top:8px;">
-            <a class="link-btn" href="https://www.google.com/maps?q=${latitude},${longitude}" target="_blank" rel="noopener noreferrer">Ver en el mapa</a>
-          </div>
-        </div>`, cal.tone);
-      document.getElementById('btnConfirmarUbic').disabled = false;
-    },
-    (err) => {
-      let msg = 'No pudimos obtener tu ubicación.';
-      if (err.code === err.PERMISSION_DENIED) msg = 'Denegaste el permiso de ubicación. Activalo en la configuración del navegador para continuar.';
-      else if (err.code === err.TIMEOUT) msg = 'Se agotó el tiempo esperando el GPS. Probá de nuevo, preferentemente al aire libre.';
-      renderUbicEstado(msg, 'bad');
-      state.ubicacion = null;
-      document.getElementById('btnConfirmarUbic').disabled = true;
-    },
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-  );
-}
-
-document.getElementById('btnReintentarUbic').addEventListener('click', solicitarUbicacion);
-document.getElementById('btnConfirmarUbic').addEventListener('click', () => {
-  if (!state.ubicacion) return;
-  if (!state.ticketCode) state.ticketCode = generarTicketCode();
-  document.getElementById('ticketPreview').textContent = 'Ticket: ' + state.ticketCode;
-  showScreen('screenCamara');
-  iniciarCamara();
-});
-
-/* ---------------------------------------------------------------------- */
-/* 3. Cámara                                                               */
-/* ---------------------------------------------------------------------- */
-
-const video = document.getElementById('video');
-const camaraError = document.getElementById('camaraError');
-const btnDisparar = document.getElementById('btnDisparar');
-
-async function iniciarCamara() {
-  camaraError.textContent = '';
-  try {
-    state.stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } },
-      audio: false
-    });
-    video.srcObject = state.stream;
-    btnDisparar.disabled = false;
-  } catch (e) {
-    camaraError.textContent = 'No pudimos acceder a la cámara. Revisá los permisos del navegador e intentá de nuevo.';
-    btnDisparar.disabled = true;
-  }
-}
-
-function renderThumbs() {
-  const strip = document.getElementById('thumbStrip');
-  strip.innerHTML = '';
-  state.fotos.forEach((foto, idx) => {
-    const div = document.createElement('div');
-    div.className = 'thumb';
-    const img = document.createElement('img');
-    img.src = foto.dataUrl;
-    div.appendChild(img);
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.textContent = '✕';
-    del.setAttribute('aria-label', 'Borrar foto');
-    del.addEventListener('click', () => eliminarFoto(idx));
-    div.appendChild(del);
-    strip.appendChild(div);
-  });
-  document.getElementById('fotoCounter').textContent = `${state.fotos.length} / ${MAX_FOTOS}`;
-  btnDisparar.disabled = state.fotos.length >= MAX_FOTOS;
-  document.getElementById('btnFinalizar').disabled = state.fotos.length === 0;
-}
-
-function eliminarFoto(idx) {
-  state.fotos.splice(idx, 1);
-  renderThumbs();
-}
-
-function blobToDataURL(blob) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.readAsDataURL(blob);
-  });
-}
-
-function canvasToBlob(canvas, quality) {
-  return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
-}
-
-// Dibuja un QR ya generado en la esquina inferior derecha del canvas. El QR
-// se genera con el blanco ya semitransparente y el negro sólido (ver
-// capturarFoto), así se integra con la foto sin perder legibilidad.
-function dibujarQr(canvas, qrCanvas) {
-  const ctx = canvas.getContext('2d');
-  const size = Math.round(canvas.width * 0.055);
-  const pad = Math.round(size * 0.1);
-  const x = canvas.width - size - pad;
-  const y = canvas.height - size - pad;
-  ctx.drawImage(qrCanvas, x, y, size, size);
-}
-
-// Dibuja el frame de la cámara con el QR estampado y lo codifica en un JPEG
-// de buena calidad. Las fotos ya no se guardan en Firestore (por eso no hay
-// que exprimirlas para entrar en 1MB) — se suben a Cloudinary, así que acá
-// solo importa que se vean bien y no pesen tanto como para tardar una
-// eternidad en subir con datos móviles.
-async function capturarFoto(video, qrTexto) {
-  const qrCanvas = await QRCode.toCanvas(qrTexto, {
-    margin: 0, width: 200,
-    color: { dark: '#000000ff', light: '#ffffff4d' } // negro sólido, blanco ~30% opaco
-  });
-  const maxDim = 1600;
-  const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(video.videoWidth * scale);
-  canvas.height = Math.round(video.videoHeight * scale);
-  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-  dibujarQr(canvas, qrCanvas);
-  return canvasToBlob(canvas, 0.88);
-}
-
-btnDisparar.addEventListener('click', async () => {
-  if (state.fotos.length >= MAX_FOTOS || !video.videoWidth || !state.ticketCode) return;
-  btnDisparar.disabled = true;
-  camaraError.textContent = '';
-  try {
-    const shotNumber = state.nextShotNumber++;
-    const qrTexto = `${state.ticketCode}-${String(shotNumber).padStart(2, '0')}`;
-    const blob = await capturarFoto(video, qrTexto);
-    if (!blob) return;
-    const dataUrl = await blobToDataURL(blob);
-    state.fotos.push({ blob, dataUrl, capturedAt: Date.now(), shotNumber });
-    renderThumbs();
-  } catch (e) {
-    camaraError.textContent = 'No se pudo tomar la foto: ' + (e && e.message ? e.message : String(e));
-  } finally {
-    btnDisparar.disabled = state.fotos.length >= MAX_FOTOS;
-  }
-});
-
-function detenerCamara() {
-  if (state.stream) {
-    state.stream.getTracks().forEach(t => t.stop());
-    state.stream = null;
-  }
-}
-
-/* ---------------------------------------------------------------------- */
-/* 4. Subida                                                               */
-/* ---------------------------------------------------------------------- */
-
-function generarTicketCode() {
-  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sin 0/O ni 1/I
-  let out = '';
-  for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
-}
-
-// Sube el blob de la foto directo a Cloudinary (upload unsigned, sin clave
-// secreta) y devuelve la URL pública de la imagen ya alojada.
-async function subirACloudinary(blob) {
-  const formData = new FormData();
-  formData.append('file', blob);
-  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-  const resp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
-    method: 'POST',
-    body: formData
-  });
-  if (!resp.ok) throw new Error('Error al subir la foto a Cloudinary (código ' + resp.status + ')');
-  const data = await resp.json();
-  return data.secure_url;
-}
-
-document.getElementById('btnFinalizar').addEventListener('click', async () => {
-  if (state.fotos.length === 0) return;
-  detenerCamara();
-  showScreen('screenSubiendo');
-  const fill = document.getElementById('subProgressFill');
-  const label = document.getElementById('subProgressLabel');
-  const log = document.getElementById('subLog');
-  const total = state.fotos.length + 1; // +1 por el doc del lote
-  let done = 0;
-  const updateProgress = (msg) => {
-    done++;
-    fill.style.width = Math.round((done / total) * 100) + '%';
-    label.textContent = `${done} / ${total}`;
-    if (msg) log.textContent = msg;
-  };
-
-  try {
-    if (!auth.currentUser) {
-      await signInAnonymously(auth);
-    }
-    const uid = auth.currentUser.uid;
-    if (!state.ticketCode) state.ticketCode = generarTicketCode(); // no debería pasar: se genera al entrar a la cámara
-
-    const loteRef = doc(collection(db, 'lotes'));
-    state.loteId = loteRef.id;
-
-    await setDoc(loteRef, {
-      ticketCode: state.ticketCode,
-      patente: state.patente || null,
-      ubicacion: state.ubicacion,
-      status: 'pendiente',
-      fotoCount: state.fotos.length,
-      createdAt: serverTimestamp(),
-      creatorUid: uid,
-      userAgent: navigator.userAgent
-    });
-    updateProgress('Lote creado, subiendo fotos…');
-
-    for (let i = 0; i < state.fotos.length; i++) {
-      const foto = state.fotos[i];
-      const fotoId = String(foto.shotNumber).padStart(2, '0');
-      const url = await subirACloudinary(foto.blob);
-      await setDoc(doc(db, 'lotes', state.loteId, 'fotos', fotoId), {
-        url,
-        capturedAt: foto.capturedAt,
-        order: foto.shotNumber
-      });
-      updateProgress(`Foto ${i + 1} / ${state.fotos.length} subida`);
-    }
-
-    document.getElementById('ticketCode').textContent = state.ticketCode;
-    // Sin número fijo: wa.me sin destinatario abre WhatsApp y el cliente
-    // elige a quién mandárselo (no depende de configurar un número acá).
-    const waMsg = encodeURIComponent(`Hola, envío el ticket de mis fotos: ${state.ticketCode}`);
-    document.getElementById('btnWhatsapp').href = `https://wa.me/?text=${waMsg}`;
-
-    const archivosCompartibles = state.fotos.map((foto) =>
-      dataURLtoFile(foto.dataUrl, `${state.ticketCode}-${String(foto.shotNumber).padStart(2, '0')}.jpg`)
-    );
-
-    document.getElementById('btnGuardarFotos').onclick = () => {
-      state.fotos.forEach((foto, i) => {
-        setTimeout(() => {
-          const a = document.createElement('a');
-          a.href = foto.dataUrl;
-          a.download = `${state.ticketCode}-${String(foto.shotNumber).padStart(2, '0')}.jpg`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        }, i * 150); // pequeño delay entre cada una para que el navegador no las bloquee
-      });
-    };
-
-    const btnCompartir = document.getElementById('btnCompartirFotos');
-    if (navigator.canShare && navigator.canShare({ files: archivosCompartibles })) {
-      btnCompartir.classList.remove('hidden');
-      btnCompartir.onclick = () => navigator.share({
-        files: archivosCompartibles,
-        title: 'Fotos ' + state.ticketCode,
-        text: `Ticket ${state.ticketCode}`
-      }).catch(() => {});
-    } else {
-      btnCompartir.classList.add('hidden');
-    }
-
-    showScreen('screenTicket');
-  } catch (e) {
-    log.textContent = 'Error al subir: ' + (e && e.message ? e.message : String(e));
-    label.textContent = 'Ocurrió un error. Volvé a intentar.';
-  }
-});
-
-function dataURLtoFile(dataUrl, filename) {
-  const [header, base64] = dataUrl.split(',');
-  const mime = /data:(.*?);base64/.exec(header)[1];
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new File([bytes], filename, { type: mime });
-}
-
-document.getElementById('btnDescargarZip').addEventListener('click', async () => {
-  const btn = document.getElementById('btnDescargarZip');
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'Generando ZIP…';
-  try {
-    const zip = new JSZip();
-    for (const foto of state.fotos) {
-      const base64 = foto.dataUrl.split(',')[1] || '';
-      zip.file(`${state.ticketCode}-${String(foto.shotNumber).padStart(2, '0')}.jpg`, base64, { base64: true });
-    }
-    const content = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(content);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${state.ticketCode}.zip`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = original;
-  }
-});
-
-document.getElementById('btnNuevoLote').addEventListener('click', () => {
-  state.fotos = [];
-  state.ubicacion = null;
-  state.loteId = null;
-  state.ticketCode = null;
-  state.nextShotNumber = 1;
-  document.getElementById('patenteInput').value = '';
-  document.getElementById('ticketPreview').textContent = '';
-  showScreen('screenInicio');
-});
-
-window.addEventListener('beforeunload', () => {
-  detenerCamara();
-});
-</script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js" integrity="sha384-HGmnkDZJy7mRkoARekrrj0VjEFSh9a0Z8qxGri/kTTAJkgR8hqD1lHsYSh3JdzRi" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
+<script type="module" src="index.js"></script>
 </body>
 </html>

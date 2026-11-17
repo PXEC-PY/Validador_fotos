@@ -32,8 +32,17 @@ export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// Máximo de fotos por lote.
+// Máximo de fotos por lote (tiene que coincidir con `fotoCount <= 20` en
+// firestore.rules).
 export const MAX_FOTOS = 20;
+
+// Calidad de captura. Se guarda la foto a resolución nativa de la cámara
+// (hasta 4096 px de lado mayor: tope seguro de canvas en iPhone) y JPEG 0.95.
+// El plan gratuito de Cloudinary acepta hasta 10 MB por imagen; si una foto
+// lo supera se re-codifica un poco más comprimida.
+export const FOTO_MAX_LADO = 4096;
+export const FOTO_CALIDAD_JPEG = 0.95;
+export const FOTO_MAX_BYTES = 9.5 * 1024 * 1024;
 
 // Datos de tu cuenta de Cloudinary (Dashboard > "Cloud name", y Settings >
 // Upload > Upload presets > crear uno con Signing Mode = "Unsigned").
@@ -41,3 +50,7 @@ export const MAX_FOTOS = 20;
 // el navegador.
 export const CLOUDINARY_CLOUD_NAME = "vikwio2u";
 export const CLOUDINARY_UPLOAD_PRESET = "vikwio2u";
+
+// Única base de URL de foto aceptada. Lo mismo se valida en firestore.rules:
+// nunca se muestra ni se descarga una "foto" que apunte a otro dominio.
+export const CLOUDINARY_URL_PREFIX = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload/`;

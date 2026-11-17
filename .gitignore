@@ -1,0 +1,16 @@
+# Fotos reales de clientes / peritajes: NUNCA al repo (es público).
+fotos para validadr/
+analisis_ia/
+*.jpg
+*.jpeg
+*.heic
+*.zip
+
+# Entorno local
+.env
+.env.*
+node_modules/
+__pycache__/
+.vscode/
+.DS_Store
+Thumbs.db
